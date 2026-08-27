@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "yooz": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "YOOZ_COMPANIES": "${user_config.companies}",
+        "YOOZ_DEFAULT_REPORT_ID": "${user_config.report_id}",
+        "YOOZ_BASE_URL": "${user_config.base_url}",
+        "YOOZ_EXPORT_DIR": "${user_config.export_dir}",
+
+        "YOOZ_DISTRISERVICE_LABEL": "DistriService",
+        "YOOZ_DISTRISERVICE_APPLICATION_ID": "${user_config.distriservice_application_id}",
+        "YOOZ_DISTRISERVICE_CLIENT_ID": "${user_config.distriservice_client_id}",
+        "YOOZ_DISTRISERVICE_CLIENT_SECRET": "${user_config.distriservice_client_secret}",
+        "YOOZ_DISTRISERVICE_REFRESH_TOKEN": "${user_config.distriservice_refresh_token}",
+
+        "YOOZ_VENTE_UNIQUE_LABEL": "Vente-Unique",
+        "YOOZ_VENTE_UNIQUE_APPLICATION_ID": "${user_config.vente_unique_application_id}",
+        "YOOZ_VENTE_UNIQUE_CLIENT_ID": "${user_config.vente_unique_client_id}",
+        "YOOZ_VENTE_UNIQUE_CLIENT_SECRET": "${user_config.vente_unique_client_secret}",
+        "YOOZ_VENTE_UNIQUE_REFRESH_TOKEN": "${user_config.vente_unique_refresh_token}"
+      }
+    }
+  }
+}

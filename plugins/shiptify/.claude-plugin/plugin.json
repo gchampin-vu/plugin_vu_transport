@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shiptify",
   "displayName": "Shiptify (lecture seule)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
@@ -20,8 +20,8 @@
     "api_key": {
       "type": "string",
       "title": "Cle d'API Shiptify",
-      "description": "Ta cle personnelle, fournie par Shiptify. Elle reste sur ton poste : elle n'est ni versionnee, ni partagee, ni ecrite dans le drive d'equipe. A defaut, le serveur lit %LOCALAPPDATA%\\shiptify-mcp\\.env",
-      "required": true,
+      "description": "Ta cle personnelle, fournie par Shiptify. Elle reste sur ton poste : elle n'est ni versionnee, ni partagee, ni ecrite dans le drive d'equipe. Tu peux la saisir maintenant ou plus tard - lance /shiptify-setup dans une session pour etre guide.",
+      "required": false,
       "sensitive": true
     },
     "account_id": {

@@ -26,7 +26,10 @@ lignes de facture.
 
 | Outil | Ce qu'il rend |
 | --- | --- |
-| `shiptify_doctor` | configuration lue, cle presente (masquee), et deux vrais appels a l'API. Le premier a appeler quand ca coince |
+| `shiptify_setup_status` | ou en est la mise en service : cle saisie, origine, rangee ou non, quoi faire ensuite |
+| `shiptify_save_key` | range sur la machine la cle deja saisie dans l'interface. Aucun argument |
+| `shiptify_forget_key` | supprime la cle rangee sur la machine |
+| `shiptify_doctor` | configuration lue, cle presente (masquee), et deux vrais appels a l'API. A appeler quand un appel echoue |
 | `shiptify_list_paths` | les 91 chemins GET avec leurs filtres et leurs valeurs permises. A lire avant de deviner un nom de parametre |
 | `shiptify_accounts` | les comptes Shiptify autorises pour la cle |
 | `shiptify_list_shipments` | **l'outil principal** : les envois, filtres par dates de creation, de depart, d'arrivee, par lieu, par expediteur, par demande |
@@ -76,13 +79,61 @@ lignes de facture.
 | `X-Account-ID` | accepte sur presque tous les appels. Non necessaire sur ce compte a ce jour, a renseigner si un appel rend un `HTTP 403` |
 | Authentification | en-tete `Authorization: Api-Key <cle>`. Le prefixe est configurable (`SHIPTIFY_AUTH_PREFIX`) au cas ou Shiptify bascule sur `Bearer` |
 
-## La cle d'API : ou elle vit, et ou elle ne vit pas
+## Mettre en service : saisir la cle
 
-**Elle ne vit pas dans le vault.** Cette bibliotheque est synchronisee
-SharePoint avec toute l'equipe L&T : un `.env` pose ici partirait sur le drive
-partage. Le fichier de configuration va donc dans
-`%LOCALAPPDATA%\shiptify-mcp\.env`, cree par `install.ps1`, avec les droits NTFS
-restreints au seul utilisateur courant.
+**La saisie se fait dans l'interface de Claude Code**, jamais dans la
+conversation. Deux moments possibles, au choix de l'utilisateur :
+
+- **a l'installation** — Claude Code propose le champ « Cle d'API Shiptify » ;
+- **plus tard, a la premiere utilisation** — le champ n'est pas obligatoire, on
+  peut installer d'abord et configurer ensuite.
+
+Dans une session, la commande guide de bout en bout :
+
+```bash
+/shiptify-setup
+```
+
+Elle regarde ou on en est, dit quoi faire s'il manque la cle, la range sur la
+machine, teste la connexion, et fait un appel de demonstration.
+
+Pour saisir ou corriger la cle a la main : `/plugin` > **shiptify** >
+configuration > **Cle d'API Shiptify**. Le serveur reprend la cle au demarrage
+suivant de la session.
+
+### Trois outils pour le cycle de vie
+
+| Outil | Ce qu'il fait |
+| --- | --- |
+| `shiptify_setup_status` | la cle est-elle saisie, d'ou vient-elle, est-elle rangee sur la machine, que faire ensuite. Ne rend jamais la cle en clair |
+| `shiptify_save_key` | range sur la machine la cle **deja saisie dans l'interface**. Aucun argument |
+| `shiptify_forget_key` | supprime la cle rangee. Ne touche pas a la configuration du plugin |
+
+### Pourquoi aucun outil ne prend la cle en parametre
+
+Un `shiptify_set_api_key("...")` serait plus simple a expliquer. Il ferait
+passer le secret **par le fil de la conversation** : la cle entrerait dans le
+contexte du modele et dans la transcription de la session. C'est precisement ce
+que le champ `sensitive` du manifeste existe pour eviter — Claude Code collecte
+la valeur lui-meme et la transmet au serveur par l'environnement.
+
+`shiptify_save_key` ne prend donc **aucun argument** : il range la cle deja
+saisie. Et la regle de l'equipe reste la regle — on ne demande jamais a
+quelqu'un de coller une cle d'API dans un message.
+
+### Ou la cle est rangee
+
+**Pas dans le vault.** Cette bibliotheque est synchronisee SharePoint avec toute
+l'equipe L&T : un `.env` pose ici partirait sur le drive partage. Le serveur
+**refuse** d'ecrire ou de lire un `.env` situe dans un dossier synchronise.
+
+Le magasin est, dans l'ordre : `%CLAUDE_PLUGIN_DATA%\.env` en mode plugin,
+`%LOCALAPPDATA%\shiptify-mcp\.env` en installation directe. Droits NTFS
+restreints au seul utilisateur courant, verifie a l'ecriture.
+
+Ranger la cle n'est pas obligatoire — la configuration du plugin suffit a faire
+fonctionner le connecteur. Ca sert a deux choses : la cle survit a une
+reinstallation du plugin, et l'installation directe la trouve aussi.
 
 **Le serveur refuse de lire un `.env` situe dans un dossier synchronise.** Ce
 n'est pas une recommandation dans un README, c'est verifie a l'execution, et
@@ -241,7 +292,7 @@ pour complet, c'est un volume faux dans une revue transporteur.
 Recette passee sur ce poste le 2026-08-27, **contre l'API de production**, sur
 `mcp 1.29.1` / `httpx 0.28.1` / Python 3.14.7 :
 
-- handshake MCP stdio complet, **17 outils** exposes avec leurs schemas ;
+- handshake MCP stdio complet, **20 outils** exposes avec leurs schemas ;
 - `doctor` : `.env` lu hors du vault, cle masquee a l'affichage,
   `GET /` et `GET /accounts/` en `HTTP 200`, code de sortie 0 ;
 - **purete du flux stdio verifiee** : les journaux `httpx` partent sur la sortie

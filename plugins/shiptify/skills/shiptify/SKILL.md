@@ -14,6 +14,17 @@ Les outils sont exposes par le serveur MCP `shiptify` du meme plugin. Ils sont
 enlevement ne se font pas ici : ces operations engagent un transporteur, elles
 restent un geste humain dans l'interface Shiptify.
 
+## Si la cle manque
+
+Un outil qui repond `SHIPTIFY_API_KEY manquant` veut dire que le connecteur
+n'est pas encore configure sur ce poste. Appelle `shiptify_setup_status` : il
+donne la marche a suivre. La commande `/shiptify-setup` fait le tour complet.
+
+**Ne demande jamais a l'utilisateur de coller sa cle dans la conversation**, et
+n'appelle aucun outil en lui passant une cle en parametre - aucun ne l'accepte.
+La saisie se fait dans l'interface de Claude Code (`/plugin` > shiptify >
+configuration), ou la cle reste hors du contexte du modele.
+
 ## L'ordre qui marche
 
 1. **`shiptify_list_paths`** ou **`shiptify_dictionary`** d'abord, pour les noms

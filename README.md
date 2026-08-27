@@ -13,10 +13,11 @@ jour tout seul ensuite.
 | Plugin | Ce qu'il apporte | Etat |
 | --- | --- | --- |
 | `shiptify` | Serveur MCP en lecture seule sur la base Shiptify (17 outils) + une skill qui sait s'en servir | recette passee contre la production le 2026-08-27 |
+| `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (17 outils) + une skill. Historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-27 (31 controles). **Pas encore confronte au vrai Yooz** : les identifiants disponibles sont a regenerer d'abord |
 
-Les autres connecteurs de `10_ENGINE/` (`mcp_powerbi`, `mcp_yooz`, `mcp_teams`)
-ne sont **pas** encore empaquetes. Le catalogue est fait pour les accueillir :
-un dossier sous `plugins/`, une entree dans `marketplace.json`.
+Les autres connecteurs de `10_ENGINE/` (`mcp_powerbi`, `mcp_teams`) ne sont **pas**
+encore empaquetes. Le catalogue est fait pour les accueillir : un dossier sous
+`plugins/`, une entree dans `marketplace.json`.
 
 ## Pourquoi un plugin plutot qu'un `claude mcp add`
 
@@ -51,18 +52,49 @@ Puis, dans les deux cas :
 
 ```bash
 /plugin install shiptify@vu-transport
+/plugin install yooz-factures@vu-transport
 ```
 
-Claude Code demande alors la **cle d'API Shiptify**. Elle reste sur le poste du
-collegue : elle n'est ni versionnee, ni partagee, ni ecrite dans le drive
-d'equipe.
+Claude Code demande alors les identifiants : la **cle d'API Shiptify**, et pour
+Yooz les quatre valeurs de chaque societe (`applicationId`, `client_id`,
+`client_secret`, refresh token). **Tout reste sur le poste du collegue** : les
+champs marques `sensitive` sont collectes par Claude Code lui-meme, rien n'est
+versionne, partage, ni ecrit dans le drive d'equipe.
+
+### La saisie peut attendre
+
+Aucun identifiant Shiptify n'est **obligatoire** a l'installation : on peut
+installer d'abord et configurer a la premiere utilisation. Dans une session,
+une commande guide de bout en bout :
+
+```bash
+/shiptify-setup
+```
+
+Elle regarde ou on en est, dit exactement ou saisir la cle si elle manque, la
+range sur la machine, teste la connexion et fait un appel de demonstration.
+
+Pour saisir ou corriger un identifiant a la main, a tout moment : `/plugin` >
+le plugin > configuration. Le serveur reprend la valeur au demarrage suivant de
+la session.
+
+**La saisie se fait toujours dans l'interface de Claude Code, jamais dans la
+conversation.** C'est ce que le champ `sensitive` garantit : la valeur n'entre
+ni dans le contexte du modele, ni dans la transcription. Aucun outil des deux
+plugins n'accepte un secret en parametre - `shiptify_save_key` ne prend aucun
+argument, il range la cle deja saisie.
 
 Verifier que tout repond, dans une session :
 
 > lance shiptify_doctor
 
-Il dit d'ou vient la cle, si l'API repond, et ce que le serveur a lu comme
-configuration. C'est le premier outil a appeler quand quelque chose coince.
+> lance yooz_status
+
+Ils disent d'ou vient la configuration, si l'API repond, et ce que le serveur a
+lu. C'est le premier outil a appeler quand quelque chose coince. Cote Yooz, il
+faut ensuite un premier rapatriement, une fois :
+
+> fais un yooz_sync complet sur les deux societes
 
 ## Ce qu'un collegue doit obtenir de Shiptify
 
@@ -114,18 +146,31 @@ plugin_vu_transport/
 ├── .claude-plugin/
 │   └── marketplace.json          le catalogue : nom, proprietaire, liste des plugins
 ├── plugins/
-│   └── shiptify/
+│   ├── shiptify/
+│   │   ├── .claude-plugin/
+│   │   │   └── plugin.json       manifeste : metadonnees + userConfig (la cle)
+│   │   ├── .mcp.json             declaration du serveur MCP
+│   │   ├── server/               le code du connecteur
+│   │   │   ├── bootstrap.py      amorce : prepare l'environnement Python
+│   │   │   ├── server.py         le serveur MCP, 17 outils, lecture seule
+│   │   │   ├── openapi_get_paths.json   liste blanche des 91 chemins GET
+│   │   │   ├── requirements.txt
+│   │   │   ├── install.ps1       installation directe, hors plugin
+│   │   │   └── .env.example
+│   │   ├── skills/shiptify/SKILL.md   quand et comment interroger Shiptify
+│   │   └── README.md             la doc du connecteur
+│   └── yooz-factures/
 │       ├── .claude-plugin/
-│       │   └── plugin.json       manifeste : metadonnees + userConfig (la cle)
+│       │   └── plugin.json       manifeste + userConfig (4 secrets par societe)
 │       ├── .mcp.json             declaration du serveur MCP
 │       ├── server/               le code du connecteur
-│       │   ├── bootstrap.py      amorce : prepare l'environnement Python
+│       │   ├── bootstrap.py      amorce : meme structure que celle de shiptify
 │       │   ├── server.py         le serveur MCP, 17 outils, lecture seule
-│       │   ├── openapi_get_paths.json   liste blanche des 91 chemins GET
+│       │   ├── test_offline.py   31 controles, sans reseau
 │       │   ├── requirements.txt
 │       │   ├── install.ps1       installation directe, hors plugin
 │       │   └── .env.example
-│       ├── skills/shiptify/SKILL.md   quand et comment interroger Shiptify
+│       ├── skills/factures-yooz/SKILL.md   quand et comment interroger Yooz
 │       └── README.md             la doc du connecteur
 ├── .gitignore
 └── README.md                     ce fichier
@@ -171,3 +216,19 @@ prises en compte :
    pointer un chemin explicite.
 3. `shiptify_doctor` **detecte l'interpreteur empaquete** et le dit, au lieu de
    rapporter « absent » et d'envoyer chercher un fichier qui est bien la.
+
+**Le cas a ete remesure le 2026-08-27 en empaquetant Yooz, et il va plus loin que
+le fichier de configuration.** Dans `%LOCALAPPDATA%\yooz-mcp`, PowerShell et
+l'interpreteur du venv lance directement voient `['venv', 'yooz.env']` ; le meme
+interpreteur de venv, lance par l'alias du Store, ne voit que `['venv']`. Un
+**cache** pose sous `%LOCALAPPDATA%` serait donc different selon qui lance le
+serveur - le plugin ecrirait d'un cote, une synchro en terminal de l'autre, sans
+erreur. Deux consequences pour tout plugin Python de l'equipe :
+
+- **La racine locale d'un connecteur ne doit pas etre `%LOCALAPPDATA%`.** Yooz
+  utilise `~/.yooz-mcp` : le profil utilisateur n'est pas virtualise.
+- **La detection par `sys.base_prefix` ne suffit pas**, et l'API Windows
+  `GetCurrentPackageFullName` ne repond pas non plus dans le petit-fils du
+  processus empaquete. `yooz_status` signale donc le **symptome** (« le dossier
+  existe mais aucun fichier n'y est visible ») plutot que de pretendre nommer la
+  cause.

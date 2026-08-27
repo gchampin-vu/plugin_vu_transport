@@ -28,11 +28,13 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import functools
+import hashlib
 import io
 import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 from typing import Any
 
@@ -268,11 +270,15 @@ def _api_key() -> str:
             )
             + "\n\nEmplacements de .env essayes, dans l'ordre :\n"
             + tried
-            + "\n\nEn mode plugin, le plus simple est de renseigner la cle dans "
-            "la configuration du plugin (/plugin, champ « Cle d'API Shiptify »)."
-            "\n\nSinon, cree le fichier avec install.ps1, a cote de server.py :\n"
+            + "\n\nPour la saisir : appelle shiptify_setup_status, qui donne la "
+            "marche a suivre pour ce poste.\n\n"
+            "En resume, en mode plugin : /plugin > shiptify > configuration > "
+            "« Cle d'API Shiptify ». La saisie se fait dans l'interface de "
+            "Claude Code, pas dans la conversation.\n\n"
+            "En installation directe, cree le fichier avec install.ps1, a cote "
+            "de server.py :\n"
             f'  powershell -ExecutionPolicy Bypass -File "{pathlib.Path(__file__).resolve().parent / "install.ps1"}"\n'
-            "puis renseigne SHIPTIFY_API_KEY dedans. Modele : .env.example."
+            "Modele des variables : .env.example."
         )
     return key
 
@@ -339,6 +345,108 @@ def _key_source() -> str:
     if os.environ.get("CLAUDE_PLUGIN_ROOT"):
         return "configuration du plugin (userConfig)"
     return "environnement du processus"
+
+
+def _fingerprint(secret: str) -> str:
+    """Empreinte courte d'une cle, pour comparer sans jamais l'afficher."""
+    if not secret:
+        return ""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12]
+
+
+def _key_store_path() -> pathlib.Path:
+    """Ou la cle est rangee sur la machine, quand on la range.
+
+    Le meme fichier que le serveur relit au demarrage : on reutilise la chaine
+    de recherche de .env plutot que d'inventer un second format. On ecrit dans
+    le premier emplacement fiable, jamais dans un dossier synchronise.
+    """
+    explicit = (os.environ.get("SHIPTIFY_ENV_FILE") or "").strip()
+    if explicit:
+        return pathlib.Path(explicit)
+    plugin_data = (os.environ.get("CLAUDE_PLUGIN_DATA") or "").strip()
+    if plugin_data:
+        return pathlib.Path(plugin_data) / ".env"
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return pathlib.Path(base) / "shiptify-mcp" / ".env"
+
+
+def _stored_key() -> str:
+    """La cle telle qu'elle est ecrite sur la machine, ou "" si absente."""
+    path = _key_store_path()
+    try:
+        if not path.is_file():
+            return ""
+        return _parse_env(path.read_text(encoding="utf-8-sig")).get(
+            "SHIPTIFY_API_KEY", ""
+        )
+    except OSError:
+        return ""
+
+
+def _restrict_permissions(path: pathlib.Path) -> str:
+    """Restreint le fichier au seul utilisateur courant. Rend un compte rendu."""
+    if os.name != "nt":
+        try:
+            path.chmod(0o600)
+            return "droits POSIX restreints a 0600"
+        except OSError as exc:
+            return f"droits POSIX non modifies : {exc}"
+    user = os.environ.get("USERNAME") or ""
+    if not user:
+        return "droits NTFS non modifies : USERNAME inconnu"
+    try:
+        done = subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"droits NTFS non modifies : {exc}"
+    if done.returncode != 0:
+        return f"droits NTFS non modifies : icacls a rendu {done.returncode}"
+    return f"droits NTFS restreints a {user}"
+
+
+def _write_key_store(key: str) -> tuple[pathlib.Path, str]:
+    """Ecrit la cle dans le magasin local. Rend (chemin, note sur les droits).
+
+    Idempotent : on retire toute ligne de cle existante et on en ecrit une.
+    Le reste du fichier est preserve - il peut porter d'autres reglages.
+    """
+    path = _key_store_path()
+    if _is_synced(path):
+        raise ConfigError(
+            f"Refus d'ecrire la cle dans un dossier synchronise ({path}) : elle "
+            "partirait sur le drive partage de l'equipe. Definis "
+            "SHIPTIFY_ENV_FILE sur un chemin local."
+        )
+    lines: list[str] = []
+    try:
+        if path.is_file():
+            lines = [
+                line
+                for line in path.read_text(encoding="utf-8-sig").splitlines()
+                if not re.match(r"\s*SHIPTIFY_API_KEY\s*=", line)
+            ]
+    except OSError as exc:
+        raise ConfigError(f"Lecture impossible de {path} : {exc}") from exc
+
+    if not lines:
+        lines = [
+            "# Configuration du serveur MCP shiptify.",
+            "# Fichier local, hors du vault synchronise.",
+            f"# Ecrit le {dt.date.today().isoformat()} par shiptify_save_key.",
+            "",
+        ]
+    lines.append(f'SHIPTIFY_API_KEY="{key}"')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"Ecriture impossible dans {path} : {exc}") from exc
+    return path, _restrict_permissions(path)
 
 
 def _mask(secret: str) -> str:
@@ -640,6 +748,166 @@ def _guard(fn):
 # --------------------------------------------------------------------------
 
 mcp = FastMCP("shiptify")
+
+# --- Mise en service : la cle d'API -------------------------------------
+#
+# La saisie se fait dans l'interface de Claude Code, par le champ userConfig
+# `api_key` declare dans plugin.json (marque `sensitive`). Claude Code la
+# collecte lui-meme et la passe au serveur par l'environnement : elle ne
+# traverse jamais la conversation, donc elle n'entre ni dans le contexte du
+# modele, ni dans la transcription.
+#
+# C'est pour cette raison qu'aucun outil ici n'accepte la cle en parametre.
+# Un `shiptify_set_api_key("...")` serait plus direct a expliquer, mais il
+# ferait passer le secret par le fil de la conversation - exactement ce que le
+# champ `sensitive` existe pour eviter. `shiptify_save_key` ne prend donc aucun
+# argument : il range sur la machine la cle deja saisie dans l'interface.
+
+
+@mcp.tool()
+@_guard
+def shiptify_setup_status() -> str:
+    """Ou en est la mise en service : la cle est-elle saisie, est-elle rangee ?
+
+    A appeler en premier apres l'installation du plugin, et chaque fois qu'un
+    outil repond que la cle manque. Ne rend jamais la cle en clair.
+    """
+    _load_env_file()
+    active = _env("SHIPTIFY_API_KEY")
+    stored = _stored_key()
+    store = _key_store_path()
+    plugin_mode = bool(os.environ.get("CLAUDE_PLUGIN_ROOT"))
+
+    lines = ["Mise en service du connecteur Shiptify", ""]
+    lines.append(f"Cle active           : {_mask(active) if active else 'AUCUNE'}")
+    lines.append(f"Origine              : {_key_source()}")
+    lines.append(f"Magasin sur machine  : {store}")
+    lines.append(
+        f"Cle rangee           : {'oui, ' + _mask(stored) if stored else 'non'}"
+    )
+    if active and stored and _fingerprint(active) != _fingerprint(stored):
+        lines.append("")
+        lines.append(
+            "  NOTE : la cle rangee sur la machine n'est PAS celle utilisee. "
+            "La configuration du plugin est prioritaire sur le fichier. "
+            "Appelle shiptify_save_key pour aligner le fichier, ou "
+            "shiptify_forget_key pour supprimer l'ancienne."
+        )
+
+    lines.append("")
+    if not active:
+        lines.append("A FAIRE - saisir la cle, dans l'interface de Claude Code :")
+        lines.append("")
+        if plugin_mode:
+            lines.append("  1. tape /plugin")
+            lines.append("  2. choisis le plugin « shiptify » (marketplace vu-transport)")
+            lines.append("  3. ouvre sa configuration et renseigne « Cle d'API Shiptify »")
+            lines.append("  4. redemarre la session pour que le serveur reprenne la cle")
+        else:
+            lines.append(
+                "  Ce serveur ne tourne PAS comme plugin : il n'y a donc pas de "
+                "champ de configuration. Deux options :"
+            )
+            lines.append("  - installer le plugin (voir le README du marketplace), ou")
+            lines.append(
+                f"  - poser la cle dans {store} via install.ps1 -ApiKey."
+            )
+        lines.append("")
+        lines.append(
+            "La cle n'est pas a coller dans la conversation : le champ de "
+            "configuration la garde hors du contexte du modele."
+        )
+        packaged = _packaged_python()
+        if packaged:
+            lines.append("")
+            lines.append(f"  A savoir : {packaged}.")
+            lines.append(
+                "  Un .env sous %LOCALAPPDATA% peut etre invisible a ce "
+                "processus. Le champ de configuration du plugin, lui, marche "
+                "toujours."
+            )
+        return "\n".join(lines)
+
+    if not stored:
+        lines.append(
+            "La cle est saisie mais n'est PAS rangee sur la machine. Appelle "
+            "shiptify_save_key pour l'ecrire dans le magasin local : elle "
+            "survivra alors a une reinstallation du plugin, et l'installation "
+            "directe la trouvera aussi."
+        )
+    else:
+        lines.append("Tout est en place. Verifie la connexion avec shiptify_doctor.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+@_guard
+def shiptify_save_key() -> str:
+    """Range sur la machine la cle deja saisie dans l'interface de Claude Code.
+
+    Ne prend aucun argument, **volontairement** : la cle vient de la
+    configuration du plugin, pas de la conversation. Elle n'a donc pas a etre
+    recopiee dans un message pour etre rangee.
+
+    Le fichier est ecrit hors de tout dossier synchronise, et ses droits sont
+    restreints a l'utilisateur courant.
+    """
+    key = _api_key()  # leve une ConfigError explicite si rien n'est saisi
+    path, permissions = _write_key_store(key)
+    return "\n".join(
+        [
+            f"Cle rangee sur la machine : {path}",
+            f"Empreinte : {_fingerprint(key)} (les 12 premiers caracteres du "
+            "SHA-256, pour comparer sans afficher la cle)",
+            f"Droits : {permissions}",
+            "",
+            "Ce fichier n'est pas synchronise et n'est pas versionne. Il sera "
+            "relu automatiquement au prochain demarrage du serveur, meme si la "
+            "configuration du plugin est perdue.",
+            "",
+            "Pour l'effacer : shiptify_forget_key.",
+        ]
+    )
+
+
+@mcp.tool()
+@_guard
+def shiptify_forget_key() -> str:
+    """Supprime la cle rangee sur la machine.
+
+    Ne touche pas a la configuration du plugin : si la cle y est saisie, elle
+    continuera d'etre utilisee. Pour la retirer completement, vide aussi le
+    champ « Cle d'API Shiptify » dans /plugin.
+    """
+    path = _key_store_path()
+    try:
+        if not path.is_file():
+            return f"Aucune cle rangee a supprimer ({path} n'existe pas)."
+        lines = [
+            line
+            for line in path.read_text(encoding="utf-8-sig").splitlines()
+            if not re.match(r"\s*SHIPTIFY_API_KEY\s*=", line)
+        ]
+        # S'il ne reste que des commentaires et du vide, on retire le fichier.
+        if any(l.strip() and not l.strip().startswith("#") for l in lines):
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            note = f"Ligne de cle retiree de {path} (le reste du fichier est conserve)."
+        else:
+            path.unlink()
+            note = f"Fichier supprime : {path}"
+    except OSError as exc:
+        raise ConfigError(f"Suppression impossible dans {path} : {exc}") from exc
+
+    reste = "oui" if _env("SHIPTIFY_API_KEY") else "non"
+    return "\n".join(
+        [
+            note,
+            "",
+            f"Une cle reste active pour cette session : {reste}. "
+            "Elle vient alors de la configuration du plugin, qui n'est pas "
+            "touchee ici - vide le champ dans /plugin pour la retirer aussi.",
+        ]
+    )
 
 
 @mcp.tool()
