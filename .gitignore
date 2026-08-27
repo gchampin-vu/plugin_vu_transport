@@ -1,0 +1,18 @@
+# Aucun secret dans le depot. Le serveur refuse de toute facon de lire un .env
+# situe dans un dossier synchronise, mais on ne compte pas sur un garde-fou
+# applicatif pour tenir une regle de depot.
+.env
+*.env
+!.env.example
+
+# Caches Python
+__pycache__/
+*.py[cod]
+
+# Exports de donnees : ils sortent de l'API, ils ne se versionnent pas.
+*.csv
+shiptify-exports/
+
+# Bruit d'OS
+.DS_Store
+Thumbs.db

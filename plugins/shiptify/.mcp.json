@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "shiptify": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "SHIPTIFY_API_KEY": "${user_config.api_key}",
+        "SHIPTIFY_ACCOUNT_ID": "${user_config.account_id}",
+        "SHIPTIFY_BASE_URL": "${user_config.base_url}",
+        "SHIPTIFY_EXPORT_DIR": "${user_config.export_dir}"
+      }
+    }
+  }
+}

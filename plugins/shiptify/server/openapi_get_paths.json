@@ -1,0 +1,2327 @@
+{
+ "api_version": "1.0.0",
+ "note": "Chemins GET uniquement. Liste blanche du serveur MCP shiptify (lecture seule).",
+ "openapi": "3.0.2",
+ "paths": {
+  "/": {
+   "parameters": [],
+   "summary": "Hello API url."
+  },
+  "/accounting-entities": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Get only active",
+     "enum": null,
+     "in": "query",
+     "name": "is_active",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "summary": "Get all accounting entities."
+  },
+  "/accounts/": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Account type",
+     "enum": [
+      "shipper",
+      "carrier"
+     ],
+     "in": "query",
+     "name": "type",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get allowed accounts for user."
+  },
+  "/additional-services/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get additional services activated for the requesting shipper account."
+  },
+  "/attachments/{id}/download": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Attachment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get link for download attachment."
+  },
+  "/carriers/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Internal carrier link for integration. Max. length: 64.",
+     "enum": null,
+     "in": "query",
+     "name": "internal_ref",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all active carriers."
+  },
+  "/carriers/{id}/followers": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Carrier identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "number"
+    }
+   ],
+   "summary": "Get all followers by carrier identifier."
+  },
+  "/content-types": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all shipment content types."
+  },
+  "/content-types/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get active shipment content types for user account"
+  },
+  "/dictionary/additional-services": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all additional services."
+  },
+  "/dictionary/attachment-types": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all attachments types."
+  },
+  "/dictionary/causes": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all causes."
+  },
+  "/dictionary/claims": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all claims."
+  },
+  "/dictionary/dangerous-goods": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all dangerous goods."
+  },
+  "/dictionary/incidents": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all incidents."
+  },
+  "/dictionary/metadata-prototypes": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Metadata prototype scope.",
+     "enum": [
+      "quotes",
+      "tracking"
+     ],
+     "in": "query",
+     "name": "scope",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Metadata prototype mode.",
+     "enum": [
+      "air",
+      "sea",
+      "road",
+      "rail",
+      "express",
+      "groupage",
+      "courier",
+      "air-sea"
+     ],
+     "in": "query",
+     "name": "mode",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all metadata prototypes."
+  },
+  "/dictionary/shipment-modes": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all shipment modes."
+  },
+  "/dictionary/shipment-price-details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all shipment price details."
+  },
+  "/events": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Date from",
+     "enum": null,
+     "in": "query",
+     "name": "date_from",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date to",
+     "enum": null,
+     "in": "query",
+     "name": "date_to",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Event",
+     "enum": [
+      "create_shipment",
+      "cancel_shipment",
+      "cancel_shipment_request",
+      "reactivate_shipment",
+      "update_shipment_contents",
+      "update_tracking",
+      "update_shipment_dates",
+      "added_shipment_to_group",
+      "removed_shipment_from_group",
+      "update_shipment_request_price",
+      "accept_shipment_request_price",
+      "refuse_shipment_request_price"
+     ],
+     "in": "query",
+     "name": "event",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all events."
+  },
+  "/freight-units": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Customer key",
+     "enum": null,
+     "in": "query",
+     "name": "customer_key",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get freight units."
+  },
+  "/freight-units/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Freight unit identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get freight unit."
+  },
+  "/galaxy-data/shipments": {
+   "parameters": [
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Created date from",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_from",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Created date to",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_to",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "departure_date_min",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "departure_date_max",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "arrival_date_min",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "arrival_date_max",
+     "required": false,
+     "type": "date"
+    }
+   ],
+   "summary": "Find shipments"
+  },
+  "/galaxy/attachments/{id}/download": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Attachment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get link for download attachment."
+  },
+  "/galaxy/carrier/quote-requests/ref/{internal_ref}/shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Quote request internal ref, as sent by the carrier on creation.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get shipments by the carrier own quote internal ref."
+  },
+  "/galaxy/carrier/shipment-requests/ref/{internal_ref}/prices": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get prices by shipment request ref."
+  },
+  "/galaxy/carrier/shipment-requests/ref/{internal_ref}/shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request internal ref, as set by the shipper.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get shipments by the shipment request internal ref set by the shipper."
+  },
+  "/galaxy/carrier/shipment-requests/{id}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of attachments for shipment request by identifier."
+  },
+  "/galaxy/carrier/shipment-requests/{id}/contents": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all contents by shipment request identifier."
+  },
+  "/galaxy/carrier/shipment-requests/{id}/prices": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get prices by shipment request id."
+  },
+  "/galaxy/carrier/shipment-requests/{id}/shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get shipments by shipment request id."
+  },
+  "/galaxy/carrier/shipments/{id}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of attachments for shipment by identifier."
+  },
+  "/galaxy/carrier/shippers/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all active shippers for carrier."
+  },
+  "/galaxy/gate-access": {
+   "parameters": [
+    {
+     "description": "Location ID",
+     "enum": null,
+     "in": "query",
+     "name": "location_id",
+     "required": true,
+     "type": "integer"
+    },
+    {
+     "description": "Truck license plate number",
+     "enum": null,
+     "in": "query",
+     "name": "truck_license_plate",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "description": "Action",
+     "enum": [
+      "in",
+      "out"
+     ],
+     "in": "query",
+     "name": "action",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Check automatic gate access"
+  },
+  "/galaxy/invoice-lines": {
+   "parameters": [
+    {
+     "description": "[new, started, accepted, blocked, closed, not_priced, ready_to_invoice]",
+     "enum": null,
+     "in": "query",
+     "name": "status",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "account id",
+     "enum": null,
+     "in": "query",
+     "name": "account_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "carrier id",
+     "enum": null,
+     "in": "query",
+     "name": "carrier_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "from_pick_up_date",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "to_pick_up_date",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "from_delivery_date",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "to_delivery_date",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM')",
+     "enum": null,
+     "in": "query",
+     "name": "from_accounting_date",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM')",
+     "enum": null,
+     "in": "query",
+     "name": "to_accounting_date",
+     "required": false,
+     "type": "date"
+    }
+   ],
+   "summary": "Find invoice lines"
+  },
+  "/galaxy/shipment-requests/ref/{internalRef}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit attachment per booking",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "List of attachments for shipment request and shipment by internal ref."
+  },
+  "/galaxy/shipment-requests/ref/{internalRef}/shipments/tracking-points": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit tracking points per shipment",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment internal ref..",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get shipment tracking points by shipment request internal ref."
+  },
+  "/galaxy/shipment-requests/{id}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of attachments for shipment request by identifier."
+  },
+  "/galaxy/shipment-requests/{id}/metadata": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of shipment request metadata requests."
+  },
+  "/galaxy/shipments/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find shipment by identifier."
+  },
+  "/galaxy/shipments/{id}/contents": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all contents by shipment identifier."
+  },
+  "/galaxy/shipments/{id}/metadata": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of shipment metadata requests."
+  },
+  "/galaxy/shipments/{id}/tracking-points": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Point identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "number"
+    }
+   ],
+   "summary": "Get shipment tracking points by shipment identifier."
+  },
+  "/invoice-lines/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Invoice line identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get invoice lines by invoice line id."
+  },
+  "/invoices": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "status",
+     "enum": null,
+     "in": "query",
+     "name": "status",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Accounting month",
+     "enum": null,
+     "in": "query",
+     "name": "accounting_month",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Carrier id",
+     "enum": null,
+     "in": "query",
+     "name": "carrier_id",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all invoices."
+  },
+  "/invoices/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get invoices by id"
+  },
+  "/locations": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Search query. The string that will be searched by the fields: name, address_1, address_2, city, country, internal_code.",
+     "enum": null,
+     "in": "query",
+     "name": "q",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Link for integration with third-party projects. Max length: 64.",
+     "enum": null,
+     "in": "query",
+     "name": "internal_ref",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all locations."
+  },
+  "/locations/ref/{internal_ref}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Location identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get location by identifier."
+  },
+  "/locations/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Location identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get location by identifier."
+  },
+  "/metadata-prototypes/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get active metadata prototypes for user account."
+  },
+  "/orders": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Estimated date from",
+     "enum": null,
+     "in": "query",
+     "name": "calculated_departure_date_from",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Estimated date to",
+     "enum": null,
+     "in": "query",
+     "name": "calculated_departure_date_to",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Identifier of shipment",
+     "enum": null,
+     "in": "query",
+     "name": "shipment_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Identifier of shipment request",
+     "enum": null,
+     "in": "query",
+     "name": "shipment_request_id",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get orders."
+  },
+  "/orders/ref/{internal_ref}/details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get order details by internal ref."
+  },
+  "/orders/ref/{internal_ref}/lines": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Find lines by order internal ref."
+  },
+  "/orders/ref/{internal_ref}/statuses": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get order statuses by internal ref."
+  },
+  "/orders/{id}/details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get order details by id."
+  },
+  "/orders/{id}/lines": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find lines by order identifier"
+  },
+  "/orders/{id}/statuses": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Order identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get order statuses by id."
+  },
+  "/price-details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all price-details."
+  },
+  "/quote-requests/": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all quote requests."
+  },
+  "/quote-requests/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Quote request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find quote request by identifier."
+  },
+  "/shipment-requests/": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Internal reference to shipment request. Max length: 64.",
+     "enum": null,
+     "in": "query",
+     "name": "internal_ref",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all shipment requests."
+  },
+  "/shipment-requests/ref/{internalRef}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "List of attachments for shipment request and shipment by internal ref."
+  },
+  "/shipment-requests/ref/{internalRef}/shipments/tracking-points": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment internal ref..",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get shipment tracking points by shipment request internal ref."
+  },
+  "/shipment-requests/ref/{internal_ref}/invoice-line": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get invoice line by shipment request internal ref."
+  },
+  "/shipment-requests/ref/{internal_ref}/pre-shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get pre shipments by shipment request internal ref."
+  },
+  "/shipment-requests/ref/{internal_ref}/shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internal_ref",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get shipments by shipment request internal ref."
+  },
+  "/shipment-requests/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find shipment request by identifier."
+  },
+  "/shipment-requests/{id}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of attachments for shipment request by identifier."
+  },
+  "/shipment-requests/{id}/contents": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all contents by shipment request identifier."
+  },
+  "/shipment-requests/{id}/invoice-line": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get invoice lines by shipment request id."
+  },
+  "/shipment-requests/{id}/invoicing/details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find invoicing by shipment request identifier."
+  },
+  "/shipment-requests/{id}/metadata": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of shipment request metadata requests."
+  },
+  "/shipment-requests/{id}/pre-shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get pre shipments by shipment request id."
+  },
+  "/shipment-requests/{id}/shipments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get shipments by shipment request id."
+  },
+  "/shipments/": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Created date from",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_from",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Created date to",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_to",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Shipment Request Id",
+     "enum": null,
+     "in": "query",
+     "name": "sh_request_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "departure_date_min",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "departure_date_max",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "arrival_date_min",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "arrival_date_max",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Location Id",
+     "enum": null,
+     "in": "query",
+     "name": "dest_address_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Location Id",
+     "enum": null,
+     "in": "query",
+     "name": "from_address_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Location internal code",
+     "enum": null,
+     "in": "query",
+     "name": "dest_address_internal_ref",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Location internal code",
+     "enum": null,
+     "in": "query",
+     "name": "from_address_internal_ref",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Shipper id",
+     "enum": null,
+     "in": "query",
+     "name": "shipper_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment Request Internal Ref",
+     "enum": null,
+     "in": "query",
+     "name": "sr_internal_ref",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "summary": "Get all shipments."
+  },
+  "/shipments/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Find shipment request by identifier."
+  },
+  "/shipments/{id}/attachments": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of attachments for shipment by identifier."
+  },
+  "/shipments/{id}/metadata": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of shipment metadata requests."
+  },
+  "/shipments/{id}/sscc": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all shipments serial container codes."
+  },
+  "/shipments/{id}/tracking-points": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Shipment identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "number"
+    }
+   ],
+   "summary": "Get shipment tracking points by shipment identifier."
+  },
+  "/shippers/active": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all active shippers for carrier."
+  },
+  "/specificities": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all shipment specificities."
+  },
+  "/tags": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "true or false",
+     "enum": null,
+     "in": "query",
+     "name": "active",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "summary": "Get all tags."
+  },
+  "/tracking-points/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Point identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "number"
+    }
+   ],
+   "summary": "Get tracking point by point identifier."
+  },
+  "/transport-requests": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Limit. Max value: 100.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get all transport requests."
+  },
+  "/transport-requests/ref/{internalRef}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "transport requests internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get transport request by internal ref"
+  },
+  "/transport-requests/ref/{internalRef}/details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "transport requests internal ref.",
+     "enum": null,
+     "in": "path",
+     "name": "internalRef",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "summary": "Get transport request details"
+  },
+  "/transport-requests/{id}": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "transport requests identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get transport request"
+  },
+  "/transport-requests/{id}/details": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "transport requests identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get transport request details"
+  },
+  "/transport-requests/{id}/metadata": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Transport request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "List of transport request metadata requests."
+  },
+  "/transport-requests/{id}/prices": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Transport request identifier.",
+     "enum": null,
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "type": "integer"
+    }
+   ],
+   "summary": "Get transport request prices"
+  },
+  "/visits": {
+   "parameters": [
+    {
+     "description": "Account identifier",
+     "enum": null,
+     "in": "header",
+     "name": "X-Account-ID",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "GS1 Global Location Number (GLN) — exactly 13 digits. Used to resolve the location when X-Account-ID is absent. If both headers are provided, X-Account-ID takes precedence.",
+     "enum": null,
+     "in": "header",
+     "name": "X-GLN-ID",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Limit. Max value: 200.",
+     "enum": null,
+     "in": "query",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Offset",
+     "enum": null,
+     "in": "query",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Searched value",
+     "enum": null,
+     "in": "query",
+     "name": "location_id",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "description": "Searched value",
+     "enum": null,
+     "in": "query",
+     "name": "searched_value",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Search by one of the following fields (id, internal_ref, slot_id, slot_internal_ref, shipment_id, access_public_code, truck_license_plate, trailer_license_plate)",
+     "enum": null,
+     "in": "query",
+     "name": "searched_value_type",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "description": "Date min format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "visit_date_min",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date max format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "visit_date_max",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date created from format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_from",
+     "required": false,
+     "type": "date"
+    },
+    {
+     "description": "Date created to format('YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD')",
+     "enum": null,
+     "in": "query",
+     "name": "created_date_to",
+     "required": false,
+     "type": "date"
+    }
+   ],
+   "summary": "Get all visits."
+  }
+ },
+ "released": "2026-08-27",
+ "server": "https://api.shiptify.com/",
+ "source": "https://api-docs.shiptify.com/shiptify-public-api.openapi.json"
+}

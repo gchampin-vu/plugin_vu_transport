@@ -1,0 +1,18 @@
+{
+  "name": "vu-transport",
+  "owner": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "description": "Connecteurs et outils de l'equipe Logistique & Transport de Vente-unique.com. Lecture seule sur les systemes metier.",
+  "version": "1.0.0",
+  "plugins": [
+    {
+      "name": "shiptify",
+      "source": "./plugins/shiptify",
+      "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": ["shiptify", "transport", "middle-mile", "facturation"]
+    }
+  ]
+}
