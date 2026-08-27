@@ -81,6 +81,22 @@ Meme prudence sur les entites multiples : « Rhenus » designe quatre entites,
 **Les dates sont au format `YYYY-MM-DD`**, les mois comptables au format
 `YYYY-MM`. `/events` exige un type d'evenement : il n'y a pas de journal global.
 
+## Le resultat d'abord, la methode ensuite
+
+**L'ordre de restitution n'est pas libre.** Une reponse Shiptify se rend dans cet ordre, toujours :
+
+1. **Le resultat.** Le chiffre, le tableau, le graphique. En premier, sans preambule. Pas de
+   « je vais regarder », pas d'annonce de ce que tu t'apprêtes a faire, pas de recit des etapes
+   que tu as suivies pour y arriver.
+2. **La methode, apres.** Une fois le resultat pose : les filtres exactes que tu as appliques,
+   le perimetre de dates, le champ sur lequel tu as compte, le nombre de lignes obtenues.
+3. **Les risques que tu as identifies.** Ce qui peut rendre le chiffre faux : un champ vide, un
+   referentiel incomplet, un libelle saisi en deux langues, une troncature, un statut annule
+   inclus ou exclu, un mois en cours. Nomme-les, ne les sous-entends pas.
+
+Ce qui est interdit : commenter ta demarche **avant** d'avoir produit le resultat. Si une piste
+s'est revelee fausse en route, ca se dit dans la partie methode, pas en ouverture.
+
 ## Citer un chiffre Shiptify
 
 La regle de l'equipe s'applique sans changement : **un chiffre se cite avec son
