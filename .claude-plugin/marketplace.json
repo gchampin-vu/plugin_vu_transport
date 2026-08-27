@@ -9,8 +9,8 @@
     {
       "name": "shiptify",
       "source": "./plugins/shiptify",
-      "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine.",
-      "version": "1.1.0",
+      "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine, sur demande explicite.",
+      "version": "1.2.0",
       "category": "connecteur",
       "tags": [
         "shiptify",

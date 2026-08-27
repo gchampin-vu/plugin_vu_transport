@@ -15,7 +15,7 @@ jour tout seul ensuite.
 | `shiptify` | Serveur MCP en lecture seule sur la base Shiptify (17 outils) + une skill qui sait s'en servir | recette passee contre la production le 2026-08-27 |
 | `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (17 outils) + une skill. Historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-27 (31 controles). **Pas encore confronte au vrai Yooz** : les identifiants disponibles sont a regenerer d'abord |
 
-Les autres connecteurs de `10_ENGINE/` (`mcp_powerbi`, `mcp_teams`) ne sont **pas**
+Les autres connecteurs de `08_ENGINE/04_mcp/` (`mcp_powerbi`, `mcp_teams`) ne sont **pas**
 encore empaquetes. Le catalogue est fait pour les accueillir : un dossier sous
 `plugins/`, une entree dans `marketplace.json`.
 
@@ -45,7 +45,7 @@ publie.
 **Depuis la bibliotheque SharePoint synchronisee**, en attendant le depot :
 
 ```bash
-/plugin marketplace add "C:\Users\<toi>\CAFOM\Transport BtoC - Documents\Projets Claude\08_Guillaume_Champin\myrddin\10_ENGINE\plugin_vu_transport"
+/plugin marketplace add "C:\Users\<toi>\CAFOM\Transport BtoC - Documents\08_ENGINE\03_plugins\plugin_vu_transport"
 ```
 
 Puis, dans les deux cas :

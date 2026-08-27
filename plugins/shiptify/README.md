@@ -207,27 +207,27 @@ L'environnement virtuel est cree **hors du vault**, dans
 on ne synchronise pas quelques milliers de fichiers de dependances.
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "10_ENGINE/plugin_vu_transport/plugins/shiptify/server/install.ps1"
+powershell -ExecutionPolicy Bypass -File "08_ENGINE/03_plugins/plugin_vu_transport/plugins/shiptify/server/install.ps1"
 ```
 
 Le script cree aussi le `.env` s'il manque. Pour y poser la cle du meme geste
 (l'operation est idempotente, elle peut etre rejouee) :
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "10_ENGINE/plugin_vu_transport/plugins/shiptify/server/install.ps1" -ApiKey "<cle>"
+powershell -ExecutionPolicy Bypass -File "08_ENGINE/03_plugins/plugin_vu_transport/plugins/shiptify/server/install.ps1" -ApiKey "<cle>"
 ```
 
 Verifier :
 
 ```bash
-& "$env:LOCALAPPDATA\shiptify-mcp\venv\Scripts\python.exe" "10_ENGINE\plugin_vu_transport\plugins\shiptify\server\server.py" doctor
+& "$env:LOCALAPPDATA\shiptify-mcp\venv\Scripts\python.exe" "08_ENGINE\03_plugins\plugin_vu_transport\plugins\shiptify\server\server.py" doctor
 ```
 
 Enregistrer dans Claude Code — **la cle ne passe pas par la ligne de commande**,
 le serveur lit son `.env` :
 
 ```bash
-claude mcp add shiptify --scope user -- "%LOCALAPPDATA%\shiptify-mcp\venv\Scripts\python.exe" "<chemin absolu>\10_ENGINE\plugin_vu_transport\plugins\shiptify\server\server.py"
+claude mcp add shiptify --scope user -- "%LOCALAPPDATA%\shiptify-mcp\venv\Scripts\python.exe" "<chemin absolu>\08_ENGINE\03_plugins\plugin_vu_transport\plugins\shiptify\server\server.py"
 ```
 
 **N'installe pas les deux en meme temps** : le plugin et un enregistrement
@@ -367,7 +367,7 @@ considerer comme compromise et a faire tourner cote Shiptify.**
 Le geste, une fois la nouvelle cle en main :
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "10_ENGINE/plugin_vu_transport/plugins/shiptify/server/install.ps1" -ApiKey "<nouvelle cle>"
+powershell -ExecutionPolicy Bypass -File "08_ENGINE/03_plugins/plugin_vu_transport/plugins/shiptify/server/install.ps1" -ApiKey "<nouvelle cle>"
 ```
 
 Et dans le meme mouvement, sortir la cle du script Power Query : dans Power BI,

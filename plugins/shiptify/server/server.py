@@ -692,7 +692,9 @@ def _render_table(
         lines.append(
             "ATTENTION : resultat tronque (max_rows ou garde-fou de pagination "
             "atteint). Le compte ci-dessus n'est PAS un total : ne le cite pas "
-            "comme un volume. Pour un perimetre complet, shiptify_export_csv."
+            "comme un volume. Resserre les filtres jusqu'a ce que le "
+            "perimetre tienne. Un export CSV ne se fait que si "
+            "l'utilisateur en a demande un."
         )
     if not flat:
         lines.append("(aucune ligne)")
@@ -710,8 +712,8 @@ def _render_table(
         body = "\n".join(kept)
         lines.append(
             f"Rendu limite a {max(0, len(kept) - 1)} ligne(s) pour ne pas "
-            "saturer la conversation. Restreins avec fields=..., ou exporte "
-            "en CSV."
+            "saturer la conversation. Restreins avec fields=... ou resserre "
+            "les filtres. N'exporte en CSV que si l'utilisateur l'a demande."
         )
     lines.append("")
     lines.append(body)
@@ -1059,8 +1061,9 @@ def shiptify_list_shipments(
     (carrier.name, address_dest.zipcode) ; '*' rend les 100+ colonnes.
     Par defaut, une projection courte des colonnes utiles.
 
-    Pour un volume qui depasse quelques centaines de lignes, prefere
-    shiptify_export_csv : la conversation n'est pas un entrepot.
+    Pour un volume qui depasse quelques centaines de lignes, resserre les
+    filtres : la conversation n'est pas un entrepot. Ne bascule sur
+    shiptify_export_csv que si l'utilisateur a demande un fichier.
     """
     query = {
         "created_date_from": created_date_from,
@@ -1404,6 +1407,10 @@ def shiptify_export_csv(
 ) -> str:
     """Pagine une collection entiere et l'ecrit en CSV, sans charger la conversation.
 
+    ECRIT UN FICHIER SUR LE DISQUE. A n'appeler que si l'utilisateur a demande
+    un fichier, un export, un CSV ou un classeur. Sinon, reponds dans la
+    session avec les outils de liste et une projection fields serree.
+
     C'est l'equivalent du script Power Query : meme pagination, meme
     aplatissement des objets imbriques en colonnes pointees
     (address_dest.city, carrier.name). CSV point-virgule, UTF-8 avec BOM,
@@ -1411,7 +1418,8 @@ def shiptify_export_csv(
 
     path : un chemin GET de collection, par exemple /shipments/ ou
     /galaxy/invoice-lines. query_json : les filtres, en JSON.
-    Le fichier va dans <vault>/Assets/shiptify/ sauf SHIPTIFY_EXPORT_DIR.
+    Le fichier va dans le dossier de donnees du plugin, sauf si export_dir
+    (SHIPTIFY_EXPORT_DIR) est renseigne. Le chemin exact est rendu en reponse.
     """
     checked = _check_get_path(path)
     try:

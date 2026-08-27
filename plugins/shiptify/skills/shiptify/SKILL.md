@@ -14,6 +14,18 @@ Les outils sont exposes par le serveur MCP `shiptify` du meme plugin. Ils sont
 enlevement ne se font pas ici : ces operations engagent un transporteur, elles
 restent un geste humain dans l'interface Shiptify.
 
+## L'export est sur demande, jamais par defaut
+
+**La reponse par defaut va dans la session, pas dans un fichier.** N'appelle
+`shiptify_export_csv` que si l'utilisateur a demande un fichier, un export, un
+CSV ou un classeur : cet outil ecrit sur le disque, ce n'est pas une etape de
+routine. Sans cette demande, reponds avec les outils de liste, une projection
+`fields` serree, et cite le chiffre depuis ce que la liste a rendu.
+
+Un perimetre trop gros pour la session ne justifie pas un export de ta propre
+initiative : resserre les dates, filtre sur une agence ou un transporteur, ou
+dis a l'utilisateur que le perimetre demande un export et laisse-le decider.
+
 ## Si la cle manque
 
 Un outil qui repond `SHIPTIFY_API_KEY manquant` veut dire que le connecteur
@@ -34,8 +46,9 @@ configuration), ou la cle reste hors du contexte du modele.
    identifiants a mettre dans les filtres.
 3. **`shiptify_list_shipments`** avec un perimetre de dates serre, pour
    regarder.
-4. **`shiptify_export_csv`** des que le perimetre depasse quelques centaines de
-   lignes, ou des qu'un chiffre doit etre cite.
+4. **`shiptify_export_csv`** uniquement si l'utilisateur a demande un fichier
+   ou un export - voir la section ci-dessus. Jamais pour te rassurer sur un
+   chiffre.
 
 Si quelque chose coince, **`shiptify_doctor`** avant tout : il dit d'ou vient la
 cle, si l'API repond, et ce que le serveur a lu comme configuration.
@@ -44,9 +57,10 @@ cle, si l'API repond, et ce que le serveur a lu comme configuration.
 
 **Le nombre de lignes rendu n'est pas un volume.** L'API Shiptify ne renvoie
 aucun total : ni `total`, ni `X-Total-Count`. Les outils de liste s'arretent a
-`max_rows` et le disent en majuscules quand c'est tronque. Un volume ne se cite
-que depuis un `shiptify_export_csv`, qui pagine tout le perimetre et signale
-lui aussi une troncature.
+`max_rows` et le disent en majuscules quand c'est tronque. **Un chiffre ne se
+cite que depuis un rendu non tronque** : si la liste annonce une troncature, le
+chiffre n'est pas citable en l'etat - resserre le perimetre jusqu'a ce qu'il
+tienne, ou propose un export a l'utilisateur et attends sa reponse.
 
 **Un envoi porte 114 colonnes.** Utilise `fields` pour projeter ce qui est
 utile, en notation pointee :
@@ -72,7 +86,8 @@ Meme prudence sur les entites multiples : « Rhenus » designe quatre entites,
 La regle de l'equipe s'applique sans changement : **un chiffre se cite avec son
 perimetre et ses hypotheses.** Pas « 104 envois vers l'Espagne », mais « 104
 envois AMB vers ES, crees du 26 au 27/08/2026, filtre `created_date_from`,
-export complet ». Le message d'export donne la requete exacte : recopie-la.
+rendu non tronque ». Chaque outil rappelle en tete la requete exacte qu'il a
+jouee : recopie-la.
 
 Et la regle qui ne bouge pas : **on n'invente jamais un chiffre.** Si l'API rend
 une liste vide, la reponse est « aucune ligne sur ce perimetre », pas une
