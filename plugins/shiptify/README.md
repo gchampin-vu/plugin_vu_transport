@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-27
+updated: 2026-08-28
 updated_by: Guillaume_Champin
 type: process
 ---
@@ -79,23 +79,42 @@ lignes de facture.
 | `X-Account-ID` | accepte sur presque tous les appels. Non necessaire sur ce compte a ce jour, a renseigner si un appel rend un `HTTP 403` |
 | Authentification | en-tete `Authorization: Api-Key <cle>`. Le prefixe est configurable (`SHIPTIFY_AUTH_PREFIX`) au cas ou Shiptify bascule sur `Bearer` |
 
-## Mettre en service : saisir la cle
+## Mettre en service : une seule valeur a saisir
 
-**La saisie se fait dans l'interface de Claude Code**, jamais dans la
+La configuration se lit sur **deux niveaux**, et c'est ce qui rend la mise en
+service courte :
+
+| Niveau | Ce qu'il porte | Ou |
+| --- | --- | --- |
+| **Equipe** | racine de l'API, prefixe d'authentification, plafond de pagination, delai d'attente | `08_ENGINE/04_mcp/00_config/shiptify.shared.env` — deja rempli, rien a y faire |
+| **Poste** | **la cle d'API**, et elle seule | `/plugin` > shiptify > configuration |
+
+Le poste est prioritaire sur l'equipe : un reglage d'equipe est un point de
+depart commun, pas une contrainte.
+
+**Aucun secret dans le fichier d'equipe, et ce n'est pas qu'une consigne** : le
+serveur lit ce fichier a travers une **liste blanche**. Un `SHIPTIFY_API_KEY`
+pose la-bas est ignore, et signale par `/shiptify-setup`. Le detail est dans
+`08_ENGINE/04_mcp/00_config/README.md`.
+
+**La saisie de la cle se fait dans l'interface de Claude Code**, jamais dans la
 conversation. Deux moments possibles, au choix de l'utilisateur :
 
 - **a l'installation** — Claude Code propose le champ « Cle d'API Shiptify » ;
 - **plus tard, a la premiere utilisation** — le champ n'est pas obligatoire, on
   peut installer d'abord et configurer ensuite.
 
-Dans une session, la commande guide de bout en bout :
+Dans une session, la commande guide **pas a pas**, une etape a la fois :
 
 ```bash
 /shiptify-setup
 ```
 
-Elle regarde ou on en est, dit quoi faire s'il manque la cle, la range sur la
-machine, teste la connexion, et fait un appel de demonstration.
+Sept etapes : ce qu'il faut avoir en main, l'etat des lieux, la saisie de la
+cle (les quatre clics, litteralement), le rangement sur la machine, le test de
+connexion avec un tableau code HTTP -> cause reelle -> geste, un appel de
+demonstration, et la cloture. Elle ne deroule jamais tout d'un bloc : elle
+verifie avec un outil avant de passer a l'etape suivante.
 
 Pour saisir ou corriger la cle a la main : `/plugin` > **shiptify** >
 configuration > **Cle d'API Shiptify**. Le serveur reprend la cle au demarrage
@@ -137,8 +156,7 @@ reinstallation du plugin, et l'installation directe la trouve aussi.
 
 **Le serveur refuse de lire un `.env` situe dans un dossier synchronise.** Ce
 n'est pas une recommandation dans un README, c'est verifie a l'execution, et
-`shiptify_doctor` le dit. Meme garde-fou que le voisin `mcp_powerbi` sur son
-cache de jeton.
+`shiptify_doctor` le dit.
 
 Emplacements essayes, dans l'ordre :
 
@@ -171,13 +189,22 @@ chercher un fichier qui est bien la.
 
 | Variable | Defaut | Role |
 | --- | --- | --- |
-| `SHIPTIFY_API_KEY` | — | **obligatoire**. Mettre entre guillemets doubles : une cle contient souvent `%`, `*`, `/` |
+| `SHIPTIFY_API_KEY` | — | **obligatoire**, et **jamais dans le fichier d'equipe** (liste blanche). Mettre entre guillemets doubles : une cle contient souvent `%`, `*`, `/` |
 | `SHIPTIFY_BASE_URL` | `https://api.shiptify.com` | racine de l'API |
 | `SHIPTIFY_AUTH_PREFIX` | `Api-Key` | prefixe de l'en-tete `Authorization` |
 | `SHIPTIFY_ACCOUNT_ID` | vide | en-tete `X-Account-ID`, si un appel rend un 403 |
 | `SHIPTIFY_MAX_PAGES` | `60` | garde-fou : 60 pages de 100 = 6000 lignes par requete. A relever pour un export annuel |
 | `SHIPTIFY_TIMEOUT_S` | `60` | delai par appel HTTP |
 | `SHIPTIFY_EXPORT_DIR` | voir ci-dessous | dossier des exports CSV. Par defaut : `%CLAUDE_PLUGIN_DATA%\exports` en mode plugin, `<vault>/Assets/shiptify` en installation dans le vault, sinon `<dossier courant>/shiptify-exports` |
+| `SHIPTIFY_SHARED_ENV` | vide | chemin explicite du fichier d'equipe, si la bibliotheque SharePoint n'est pas synchronisee a l'endroit attendu |
+| `VU_ENGINE_DIR` | vide | racine `08_ENGINE` explicite, meme usage |
+
+**Ou chaque variable est lue, dans l'ordre** : environnement du processus (la
+configuration du plugin) > `.env` local hors du vault > fichier d'equipe
+`08_ENGINE/04_mcp/00_config/shiptify.shared.env` > defaut du serveur. Seules
+`SHIPTIFY_BASE_URL`, `SHIPTIFY_AUTH_PREFIX`, `SHIPTIFY_ACCOUNT_ID`,
+`SHIPTIFY_MAX_PAGES`, `SHIPTIFY_TIMEOUT_S` et `SHIPTIFY_EXPORT_DIR` peuvent
+venir du fichier d'equipe.
 
 ## Installation
 
@@ -203,8 +230,8 @@ a faire a la main, et rien a expliquer a un collegue.
 
 Utile pour mettre au point, ou sur un poste ou le plugin n'est pas voulu.
 L'environnement virtuel est cree **hors du vault**, dans
-`%LOCALAPPDATA%\shiptify-mcp\venv`, pour la meme raison que chez `mcp_powerbi` :
-on ne synchronise pas quelques milliers de fichiers de dependances.
+`%LOCALAPPDATA%\shiptify-mcp\venv` : on ne synchronise pas quelques milliers de fichiers
+de dependances.
 
 ```bash
 powershell -ExecutionPolicy Bypass -File "08_ENGINE/03_plugins/plugin_vu_transport/plugins/shiptify/server/install.ps1"

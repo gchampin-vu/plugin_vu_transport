@@ -4,6 +4,9 @@
 .env
 *.env
 !.env.example
+# Les fichiers de configuration nommes d'apres leur connecteur (peripass.env,
+# yooz.env) sont deja pris par *.env ; leurs MODELES, eux, se versionnent.
+!*.env.example
 
 # Caches Python
 __pycache__/
@@ -12,6 +15,7 @@ __pycache__/
 # Exports de donnees : ils sortent de l'API, ils ne se versionnent pas.
 *.csv
 shiptify-exports/
+peripass-exports/
 
 # Bruit d'OS
 .DS_Store

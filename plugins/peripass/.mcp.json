@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "peripass": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "PERIPASS_SITES": "${user_config.sites}",
+        "PERIPASS_AUV_API_KEY": "${user_config.auv_api_key}",
+        "PERIPASS_AMB_API_KEY": "${user_config.amb_api_key}",
+        "PERIPASS_AUV_BASE_URL": "${user_config.auv_base_url}",
+        "PERIPASS_AMB_BASE_URL": "${user_config.amb_base_url}",
+        "PERIPASS_AUV_TENANT": "${user_config.auv_tenant}",
+        "PERIPASS_AMB_TENANT": "${user_config.amb_tenant}",
+        "PERIPASS_EXPORT_DIR": "${user_config.export_dir}",
+        "PERIPASS_SHARED_ENV": "${user_config.shared_env}"
+      }
+    }
+  }
+}

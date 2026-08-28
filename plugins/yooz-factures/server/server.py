@@ -332,12 +332,283 @@ def _load_env_file() -> dict[str, str]:
     return values
 
 
+# --------------------------------------------------------------------------
+# La configuration d'equipe : le fichier partage de 08_ENGINE
+# --------------------------------------------------------------------------
+#
+# Ce fichier porte TOUT ce qui est commun a l'equipe : le reglage - region Yooz,
+# liste des societes, identifiant du data report, applicationId et client_id de
+# chaque societe, colonnes ecartees - **et les identifiants de connexion** de
+# chaque societe.
+#
+# Decision d'equipe du 2026-08-28. Les identifiants Yooz sont ceux d'une
+# APPLICATION, pas d'une personne : un jeu par societe, le meme pour tout le
+# monde, deja connu de l'equipe. Les faire ressaisir vingt-six fois n'ajoutait
+# aucune protection - seulement vingt-six mises en service qui echouent sur un
+# applicationId pris pour un client_id, et une rotation impossible a propager.
+# Ils sont donc poses une fois ici, avec le reste.
+#
+# Ce que ca implique, et qu'il faut assumer : la bibliotheque est lisible par
+# toute l'equipe L&T, donc ces identifiants le sont aussi. Le jour ou l'un
+# d'eux doit cesser de l'etre, la reponse est la configuration du plugin sur le
+# poste, qui passe DEVANT le fichier d'equipe (voir _env), pas le retrait de la
+# ligne partagee.
+#
+# UN PIEGE PROPRE AU REFRESH TOKEN, a connaitre avant d'en poser un ici.
+# Keycloak fait tourner le refresh token a chaque echange : le serveur range le
+# nouveau dans un magasin LOCAL (_store_refresh), et l'ancien peut etre invalide
+# cote Yooz. Un refresh token partage n'est donc PAS partageable indefiniment -
+# le premier poste qui s'en sert peut le perimer pour les autres, qui verront un
+# invalid_grant. Deux facons de vivre avec :
+#   - laisser la rotation desactivee cote Yooz pour ce client (a verifier avec
+#     l'administrateur Yooz) ; c'est la seule solution vraiment stable ;
+#   - sinon, poser le client_secret ici - il ne tourne pas - et garder le
+#     refresh token sur chaque poste.
+# _get_token le dit explicitement quand l'echange echoue.
+#
+# La liste blanche RESTE, mais elle a change d'objet : ce n'est plus une barriere
+# anti-secret, c'est un garde-fou contre la faute de frappe. Une variable mal
+# orthographiee serait sinon ignoree en silence, et on chercherait longtemps
+# pourquoi le reglage d'equipe ne prend pas. Elle est refusee **et signalee** par
+# /yooz-setup.
+#
+# Ce qui n'a toujours pas sa place ici : un chemin local (YOOZ_CACHE_DB,
+# YOOZ_EXPORT_DIR) - il n'existe pas sur les vingt-cinq autres postes.
+
+SHARED_FILE_NAME = "yooz.shared.env"
+ENGINE_DIR_NAME = "08_ENGINE"
+SHARED_SUBPATH = ("04_mcp", "00_config")
+
+# Reglages globaux autorises dans le fichier d'equipe.
+SHARED_ALLOWED_KEYS = frozenset(
+    {
+        "YOOZ_BASE_URL",
+        "YOOZ_COMPANIES",
+        "YOOZ_DEFAULT_REPORT_ID",
+        "YOOZ_DROP_COLUMNS",
+    }
+)
+
+# Suffixes autorises pour une variable propre a une societe (YOOZ_<CLE>_<SUFFIXE>).
+# Le nom de societe n'est pas connu a l'avance : il vient de YOOZ_COMPANIES.
+# _CLIENT_SECRET et _REFRESH_TOKEN ont ete ouverts le 2026-08-28.
+SHARED_ALLOWED_SUFFIXES = (
+    "_LABEL",
+    "_APPLICATION_ID",
+    "_CLIENT_ID",
+    "_REPORT_ID",
+    "_CLIENT_SECRET",
+    "_REFRESH_TOKEN",
+)
+
+# Les suffixes dont la VALEUR ne s'affiche jamais, meme dans un diagnostic. Le
+# NOM de la variable, lui, se dit : c'est ce qui permet de savoir d'ou vient la
+# valeur active sans la reveler.
+SHARED_SECRET_SUFFIXES = ("_CLIENT_SECRET", "_REFRESH_TOKEN")
+
+_SHARED_CACHE: dict[str, str] | None = None
+_SHARED_LOADED_FROM: str = ""
+# Cles ignorees a la lecture, parce qu'absentes de la liste blanche. Remontees
+# par yooz_status : c'est presque toujours une faute de frappe, et elle ne se
+# voit nulle part ailleurs.
+_SHARED_REJECTED: list[str] = []
+
+
+def _shared_key_allowed(key: str) -> bool:
+    if key in SHARED_ALLOWED_KEYS:
+        return True
+    if not key.startswith("YOOZ_"):
+        return False
+    return any(key.endswith(suffix) for suffix in SHARED_ALLOWED_SUFFIXES)
+
+
+def _shared_key_is_secret(key: str) -> bool:
+    return any(key.endswith(suffix) for suffix in SHARED_SECRET_SUFFIXES)
+
+
+def _parse_env_text(text: str) -> dict[str, str]:
+    """Parseur KEY=VALUE minimal, # en commentaire, guillemets optionnels."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        out[key.strip().upper()] = val
+    return out
+
+
+def _engine_roots() -> list[pathlib.Path]:
+    """Racines `08_ENGINE` plausibles, dans l'ordre de preference.
+
+    Le plugin est installe depuis `08_ENGINE/03_plugins/...`, mais Claude Code
+    en fait une copie dans `~/.claude/plugins/`. On ne peut donc pas se
+    contenter de remonter depuis le code : on remonte quand meme (cas de
+    l'installation directe depuis la bibliotheque), et on complete par le
+    profil utilisateur, ou OneDrive synchronise la bibliotheque d'equipe.
+    """
+    out: list[pathlib.Path] = []
+
+    def add(path: pathlib.Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        if resolved not in out:
+            out.append(resolved)
+
+    explicit = _clean(os.environ.get("VU_ENGINE_DIR"))
+    if explicit:
+        add(pathlib.Path(explicit))
+
+    starts = [pathlib.Path(__file__).resolve()]
+    plugin_root = _clean(os.environ.get("CLAUDE_PLUGIN_ROOT"))
+    if plugin_root:
+        starts.append(pathlib.Path(plugin_root))
+    for start in starts:
+        for parent in start.parents:
+            if parent.name == ENGINE_DIR_NAME:
+                add(parent)
+                break
+
+    # Profil utilisateur : OneDrive pose la bibliotheque d'equipe sous
+    # <profil>\CAFOM\<bibliotheque>\. Le nom exact varie d'un poste a l'autre,
+    # on ne le devine pas, on le cherche.
+    home = pathlib.Path.home()
+    for pattern in ("CAFOM/*/" + ENGINE_DIR_NAME, "*/CAFOM/*/" + ENGINE_DIR_NAME):
+        try:
+            for hit in sorted(home.glob(pattern)):
+                if hit.is_dir():
+                    add(hit)
+        except OSError:
+            continue
+    return out
+
+
+def _shared_env_candidates() -> list[pathlib.Path]:
+    """Emplacements du fichier d'equipe essayes, dans l'ordre."""
+    out: list[pathlib.Path] = []
+    explicit = _clean(os.environ.get("YOOZ_SHARED_ENV"))
+    if explicit:
+        out.append(pathlib.Path(explicit))
+    for root in _engine_roots():
+        out.append(root.joinpath(*SHARED_SUBPATH, SHARED_FILE_NAME))
+    return out
+
+
+def _load_shared_env() -> dict[str, str]:
+    """Lit le premier fichier d'equipe trouve, filtre par la liste blanche.
+
+    Ne leve jamais : un fichier d'equipe absent, illisible ou mal rempli ne
+    doit pas empecher le connecteur de tourner sur la configuration du poste.
+    Ce qui a ete refuse est garde de cote pour que yooz_status le dise.
+
+    Ce chargeur ne passe **pas** par _guard_not_synced, et c'est voulu : ce
+    fichier vit dans un dossier synchronise par construction, et depuis le
+    2026-08-28 il porte deliberement les identifiants d'application de l'equipe.
+    _guard_not_synced continue de proteger ce qui est PROPRE au poste - le
+    yooz.env local, le magasin de refresh tokens renouveles - qui n'a, lui,
+    aucune raison de monter sur le drive.
+
+    Les valeurs lues ne sont PAS versees dans os.environ : elles restent dans ce
+    cache, et c'est _env qui va les chercher en dernier recours. Elles
+    n'apparaissent donc pas dans l'environnement du processus, ni dans ce qu'un
+    sous-processus en heriterait.
+    """
+    global _SHARED_CACHE, _SHARED_LOADED_FROM, _SHARED_REJECTED
+    if _SHARED_CACHE is not None:
+        return _SHARED_CACHE
+    values: dict[str, str] = {}
+    rejected: list[str] = []
+    for path in _shared_env_candidates():
+        try:
+            if not path.is_file():
+                continue
+            raw = _parse_env_text(path.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        for key, val in raw.items():
+            if _shared_key_allowed(key):
+                if val.strip():
+                    values[key] = val.strip()
+            else:
+                rejected.append(key)
+        _SHARED_LOADED_FROM = str(path)
+        break
+    _SHARED_REJECTED = rejected
+    _SHARED_CACHE = values
+    return values
+
+
+def _shared_report() -> list[str]:
+    """Les lignes que yooz_status affiche sur le fichier d'equipe."""
+    shared = _load_shared_env()
+    lines: list[str] = []
+    if _SHARED_LOADED_FROM:
+        lines.append(f"Config d'equipe         : {_SHARED_LOADED_FROM}")
+        lines.append(
+            "  reglages repris       : "
+            + (
+                ", ".join(sorted(k for k in shared if not _shared_key_is_secret(k)))
+                or "(aucun)"
+            )
+        )
+        masques = sorted(k for k in shared if _shared_key_is_secret(k))
+        if masques:
+            lines.append(
+                "  dont identifiants     : "
+                + ", ".join(masques)
+                + " (valeurs jamais affichees ; retenues seulement si ce poste "
+                "n'en definit pas)"
+            )
+    else:
+        lines.append("Config d'equipe         : aucune (valeurs par defaut du serveur)")
+        for path in _shared_env_candidates():
+            lines.append(f"    absent  {path}")
+    if _SHARED_REJECTED:
+        lines.append("")
+        lines.append(
+            "  ATTENTION : le fichier d'equipe porte des cles que ce serveur ne "
+            "connait pas, elles ont ete IGNOREES : "
+            + ", ".join(sorted(set(_SHARED_REJECTED)))
+            + "."
+        )
+        lines.append(
+            "  Dans la quasi-totalite des cas, c'est une faute de frappe dans le "
+            "nom de la variable, ou une societe absente de YOOZ_COMPANIES : "
+            "compare avec .env.example. Une cle ignoree ne produit aucune erreur "
+            "ailleurs - c'est ici, et seulement ici, que ca se voit."
+        )
+    return lines
+
+
 def _env(name: str, default: str = "") -> str:
+    """La valeur retenue pour un reglage, dans un ordre de priorite fixe.
+
+    1. l'environnement du processus - la configuration du plugin ;
+    2. le fichier local hors du vault - le mode direct, et les secrets ;
+    3. le fichier d'equipe de 08_ENGINE - ce que l'equipe a decide ;
+    4. la valeur par defaut du serveur.
+
+    Le poste passe donc devant l'equipe, et non l'inverse : un reglage
+    d'equipe est un point de depart commun, pas une contrainte. Depuis le
+    2026-08-28, le niveau 3 fournit aussi les identifiants d'application de
+    l'equipe : voir la liste blanche de _load_shared_env.
+    """
     name = name.upper()
     from_process = _clean(os.environ.get(name))
     if from_process:
         return from_process
-    return (_load_env_file().get(name) or default).strip()
+    from_local = (_load_env_file().get(name) or "").strip()
+    if from_local:
+        return from_local
+    from_team = _load_shared_env().get(name, "").strip()
+    if from_team:
+        return from_team
+    return default.strip()
 
 
 def _base_url() -> str:
@@ -477,6 +748,45 @@ def _store_refresh(key: str, token: str) -> None:
         pass
 
 
+def _refresh_key(company: Company) -> str:
+    return f"YOOZ_{_slug(company.key)}_REFRESH_TOKEN"
+
+
+def _refresh_origin(company: Company) -> str:
+    """D'ou vient le jeton effectivement presente a Yooz.
+
+    Sert dans le message d'erreur d'authentification, ou c'est la question qui
+    fait perdre le plus de temps : un jeton d'equipe se corrige dans 08_ENGINE
+    pour tout le monde, un jeton de poste dans /plugin pour soi seul, et un
+    jeton renouvele localement se corrige en vidant le magasin.
+    """
+    key = _refresh_key(company)
+    if _stored_refresh(company.key):
+        return (
+            f"le magasin local des jetons renouvelles, {_token_store_path()} "
+            "(supprime l'entree pour repartir du jeton configure)"
+        )
+    if _clean(os.environ.get(key)):
+        return "la configuration du plugin, champ « refresh token » de cette societe"
+    if (_load_env_file().get(key) or "").strip():
+        return f"le fichier local lu au demarrage ({_ENV_SOURCE})"
+    if _load_shared_env().get(key):
+        return f"le fichier d'equipe ({_SHARED_LOADED_FROM})"
+    return "aucune source identifiee - appelle yooz_status"
+
+
+def _refresh_from_team(company: Company) -> bool:
+    """Le jeton presente vient-il du fichier d'equipe ?"""
+    key = _refresh_key(company)
+    if _stored_refresh(company.key):
+        return False
+    if _clean(os.environ.get(key)):
+        return False
+    if (_load_env_file().get(key) or "").strip():
+        return False
+    return bool(_load_shared_env().get(key))
+
+
 def _get_token(company: Company, force: bool = False) -> str:
     cached = _TOKENS.get(company.key)
     if cached and not force and cached[1] > time.time() + 30:
@@ -516,9 +826,22 @@ def _get_token(company: Company, force: bool = False) -> str:
         if "invalid_grant" in body:
             hint = (
                 "\nLe refresh token est revoque, expire, ou n'appartient pas a ce "
-                "client_id. Il faut en regenerer un dans Yooz et le remettre dans "
-                "le fichier d'environnement."
+                "client_id. Il faut en regenerer un dans Yooz et le remettre a "
+                f"l'endroit d'ou il vient : {_refresh_origin(company)}."
             )
+            if _refresh_from_team(company):
+                hint += (
+                    "\n\nCAUSE LA PLUS PROBABLE ICI : ce refresh token vient du "
+                    "fichier d'equipe, et Keycloak le fait TOURNER a chaque "
+                    "echange. Le premier poste qui s'en sert recoit un nouveau "
+                    "jeton, le range chez lui, et celui du fichier partage n'est "
+                    "plus valable pour les autres. Un refresh token ne se "
+                    "partage donc durablement que si la rotation est desactivee "
+                    "cote Yooz pour ce client - a verifier avec l'administrateur "
+                    "Yooz. Sinon : laisse le client_secret dans le fichier "
+                    "d'equipe (lui ne tourne pas) et fais saisir le refresh "
+                    "token par chacun dans /plugin."
+                )
         elif "unauthorized_client" in body or "invalid_client" in body:
             hint = "\nLe couple client_id / client_secret est refuse par Yooz."
         raise AuthError(
@@ -1053,6 +1376,7 @@ def yooz_status() -> str:
     if not _load_env_file():
         for path in _candidate_env_files():
             lines.append(f"    {'present' if path.exists() else 'absent '} {path}")
+    lines.extend(_shared_report())
     lines.append(f"Interpreteur            : {sys.executable}")
     lines.append(f"Racine locale           : {_local_root()}")
     lines.append(f"Base URL                : {_base_url()}")
@@ -1095,9 +1419,17 @@ def yooz_status() -> str:
         )
         lines.append(f"  secret        : {'renseigne' if comp.client_secret else 'MANQUANT'}")
         lines.append(f"  refresh token : {'renseigne' if comp.refresh_token else 'MANQUANT'}")
+        lines.append(f"  jeton presente: {_refresh_origin(comp)}")
         lines.append(f"  rapport       : {comp.report_id or '(manquant)'}")
         if comp.missing:
             lines.append(f"  -> a completer : {', '.join(comp.missing)}")
+            lines.append(
+                "     Le cas normal est que tout vienne du fichier d'equipe : si "
+                "la ligne « Config d'equipe » ci-dessus dit « aucune », c'est "
+                "que 08_ENGINE/04_mcp/00_config n'est pas atteignable depuis ce "
+                "poste. Synchronise la bibliotheque, ou pointe-la avec "
+                "VU_ENGINE_DIR / YOOZ_SHARED_ENV, plutot que de tout ressaisir."
+            )
             continue
         try:
             _get_token(comp, force=True)

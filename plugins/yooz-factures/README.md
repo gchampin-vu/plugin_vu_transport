@@ -162,10 +162,40 @@ connecteur qui puisse avoir un effet dans Yooz.
   ci-dessus vient donc de la collection Postman publique de Yooz, pas d'une
   supposition.
 
-## Ou vivent les secrets
+## Ou vit quoi : le reglage d'un cote, les secrets de l'autre
 
-**Jamais dans le vault, jamais dans le catalogue de plugins.** Deux voies, et la
-premiere est celle du plugin.
+La configuration se lit sur **trois niveaux**, et c'est ce qui rend la mise en
+service courte : sur les quatre valeurs par societe, **deux seulement** sont a
+saisir sur le poste.
+
+| Niveau | Ce qu'il porte | Ou |
+| --- | --- | --- |
+| **Equipe** | region Yooz, societes, identifiant du data report, `applicationId` et `client_id` de chaque societe, colonnes ecartees | `08_ENGINE/04_mcp/00_config/yooz.shared.env` — deja rempli, rien a y faire |
+| **Poste** | **`client_secret` et refresh token** de chaque societe | `/plugin` > yooz-factures > configuration |
+| **Poste, mode direct** | les memes secrets, plus les chemins locaux | `~\.yooz-mcp\yooz.env`, hors du vault |
+
+Le poste est prioritaire sur l'equipe : un reglage d'equipe est un point de
+depart commun, pas une contrainte.
+
+Ce partage n'est pas cosmetique. La faute la plus couteuse de la mise en service
+est de confondre `applicationId` et `client_id` — elle rend un
+`403 EMPTY_OR_BAD_APPLICATION_ID` qui se lit a tort comme une erreur
+d'authentification. La poser **une fois pour toute l'equipe** supprime la faute
+au lieu de la documenter.
+
+**Aucun secret dans le fichier d'equipe, et ce n'est pas qu'une consigne** : le
+serveur lit ce fichier a travers une **liste blanche**. Un
+`YOOZ_*_CLIENT_SECRET` ou un `YOOZ_*_REFRESH_TOKEN` pose la-bas est **ignore**,
+et signale par `/yooz-setup` — il ne fonctionnerait pas, il ne ferait que
+fuiter. Detail dans `08_ENGINE/04_mcp/00_config/README.md`.
+
+Deux variables d'environnement permettent de pointer le fichier d'equipe quand
+la bibliotheque SharePoint n'est pas synchronisee a l'endroit attendu :
+`YOOZ_SHARED_ENV` (le fichier) ou `VU_ENGINE_DIR` (la racine `08_ENGINE`).
+
+### Les secrets : jamais dans le vault, jamais dans le catalogue de plugins
+
+Deux voies, et la premiere est celle du plugin.
 
 ### En mode plugin : la configuration du plugin
 
@@ -237,23 +267,29 @@ Puis le premier rapatriement, une fois :
 
 ### Ce qu'un collegue doit obtenir avant
 
-Le plugin ne donne aucun acces : il utilise **les identifiants du collegue**. Pour
-chaque societe, quatre valeurs a demander par le canal habituel (Yooz, ou la
-personne qui administre l'application) :
+Le plugin ne donne aucun acces : il utilise **les identifiants du collegue**.
+Quatre valeurs par societe, mais **deux seulement sont a sa charge** :
 
-| Valeur | Ce que c'est |
-| --- | --- |
-| `applicationId` | identifiant de l'application Yooz, **en-tete HTTP** |
-| `client_id` | identifiant du client API |
-| `client_secret` | secret du client API |
-| refresh token | jeton *offline* genere dans Yooz |
+| Valeur | Ce que c'est | Qui la fournit |
+| --- | --- | --- |
+| `applicationId` | identifiant de l'application Yooz, **en-tete HTTP** | le fichier d'equipe |
+| `client_id` | identifiant du client API | le fichier d'equipe |
+| `client_secret` | secret du client API | **lui**, dans `/plugin` |
+| refresh token | jeton *offline* genere dans Yooz | **lui**, dans `/plugin` |
 
-La distinction qui fait perdre du temps : **`applicationId` n'est pas le
+Les deux dernieres se demandent par le canal habituel : Yooz, ou la personne qui
+administre l'application.
+
+La distinction qui faisait perdre du temps : **`applicationId` n'est pas le
 `client_id`**. Un `applicationId` errone rend un `403 EMPTY_OR_BAD_APPLICATION_ID`,
-ce qui se lit a tort comme une erreur d'authentification.
+ce qui se lit a tort comme une erreur d'authentification. Depuis que la valeur
+est posee une fois pour l'equipe, le collegue n'a plus l'occasion de se tromper —
+sauf si `/yooz-setup` lui dit que le fichier d'equipe est introuvable, auquel cas
+il devra la saisir.
 
 Sans identifiants, le plugin s'installe et `yooz_status` dit precisement ce qui
-manque.
+manque. La commande `/yooz-setup` conduit la mise en service **pas a pas**, une
+etape a la fois, avec un tableau erreur -> cause reelle -> geste.
 
 ### Le chemin direct, hors plugin
 

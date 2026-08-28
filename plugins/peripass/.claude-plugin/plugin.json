@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "peripass",
+  "displayName": "Peripass (lecture seule)",
+  "version": "1.1.0",
+  "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs, creneaux, arrivees et departs, assets sur la cour, taches, profils et tableaux de dispatch. Export CSV pagine, sur demande explicite.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "peripass",
+    "yard",
+    "cour",
+    "creneau",
+    "quai",
+    "logistique",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "auv_api_key": {
+      "type": "string",
+      "title": "Cle d'API Peripass - AUV (Moulins)",
+      "description": "La cle du tenant AUV, fournie par Peripass. Commence par lancer /peripass-setup : si l'equipe fournit deja cette cle dans 08_ENGINE/04_mcp/00_config/peripass.shared.env, il n'y a RIEN a saisir ici. Ce champ sert alors a surcharger la valeur d'equipe sur ce poste - cle nominative, tenant de recette. Ce que tu tapes ici reste sur ton poste : ni versionne, ni ecrit dans le drive d'equipe.",
+      "required": false,
+      "sensitive": true
+    },
+    "amb_api_key": {
+      "type": "string",
+      "title": "Cle d'API Peripass - AMB (Amblainville)",
+      "description": "La cle du tenant AMB. Elle est DIFFERENTE de celle d'AUV : Peripass n'a pas une base mais une par site. Meme regle, et meme reflexe : /peripass-setup dit d'abord si l'equipe la fournit deja.",
+      "required": false,
+      "sensitive": true
+    },
+    "shared_env": {
+      "type": "string",
+      "title": "Chemin du fichier de configuration d'equipe (optionnel)",
+      "description": "A ne renseigner que si /peripass-setup affiche « Config d'equipe : aucune ». Le connecteur cherche tout seul 08_ENGINE/04_mcp/00_config/peripass.shared.env sous ton profil ; il ne le trouve pas si la bibliotheque SharePoint « Transport BtoC » n'est pas synchronisee au meme endroit que chez les autres. Colle alors le chemin complet du fichier.",
+      "required": false
+    },
+    "sites": {
+      "type": "string",
+      "title": "Sites a interroger (optionnel)",
+      "description": "Liste separee par des virgules. Reglage d'equipe, deja pose dans peripass.shared.env (AUV,AMB). Ne le renseigne ici que pour n'interroger qu'un seul site depuis ce poste.",
+      "required": false
+    },
+    "auv_base_url": {
+      "type": "string",
+      "title": "Racine d'API du site AUV (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans peripass.shared.env (https://vente-unique-logistics-auv.peripass.app/api/v2). A ne renseigner que pour surcharger ce reglage sur ce poste - typiquement la forme moderne https://restapiprd.peripass.app/api/v2, qui demande alors le tenant ci-dessous.",
+      "required": false
+    },
+    "amb_base_url": {
+      "type": "string",
+      "title": "Racine d'API du site AMB (optionnel)",
+      "description": "Laisse vide, meme remarque que pour AUV : le reglage d'equipe fait foi.",
+      "required": false
+    },
+    "auv_tenant": {
+      "type": "string",
+      "title": "Tenant Peripass du site AUV (optionnel)",
+      "description": "Le nom de tenant, envoye en parametre `tenant`. Necessaire uniquement si la racine d'API est la racine partagee restapiprd.peripass.app. La bascule se decide pour toute l'equipe, dans peripass.shared.env - ce champ ne sert qu'a la tester chez soi.",
+      "required": false
+    },
+    "amb_tenant": {
+      "type": "string",
+      "title": "Tenant Peripass du site AMB (optionnel)",
+      "description": "Idem pour AMB.",
+      "required": false
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut, le dossier de donnees du plugin. Ce reglage est LOCAL par nature : il ne peut pas venir du fichier d'equipe, un chemin valable ici n'existe pas sur les autres postes.",
+      "required": false
+    }
+  }
+}

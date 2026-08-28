@@ -10,7 +10,7 @@
       "name": "shiptify",
       "source": "./plugins/shiptify",
       "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine, sur demande explicite.",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "category": "connecteur",
       "tags": [
         "shiptify",
@@ -23,13 +23,28 @@
       "name": "yooz-factures",
       "source": "./plugins/yooz-factures",
       "description": "Interroge la base de factures Yooz en lecture seule : historique rapatrie dans un cache local et interrogeable en SQL, plus les requetes directes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). 17 outils et une skill.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "category": "connecteur",
       "tags": [
         "yooz",
         "facturation",
         "fournisseur",
         "comptabilite"
+      ]
+    },
+    {
+      "name": "peripass",
+      "source": "./plugins/peripass",
+      "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs et creneaux de quai, arrivees, check-in et departs, temps d'attente et de rotation, assets sur la cour, taches, profils et tableaux de dispatch. 20 outils et une skill. Multi-tenant : une cle par site, et une colonne site sur chaque resultat.",
+      "version": "1.1.0",
+      "category": "connecteur",
+      "tags": [
+        "peripass",
+        "yard",
+        "cour",
+        "creneau",
+        "quai",
+        "transport"
       ]
     }
   ]

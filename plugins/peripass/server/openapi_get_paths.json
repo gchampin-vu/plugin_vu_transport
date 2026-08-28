@@ -1,0 +1,715 @@
+{
+  "api_version": "2.0",
+  "enums": {
+    "AssetSearchObject": [
+      "SystemField",
+      "CustomField"
+    ],
+    "AssetStatus": [
+      "ToLoad",
+      "FinishedFull",
+      "ToUnload",
+      "FinishedEmpty",
+      "Offsite"
+    ],
+    "AssignedProfileStatus": [
+      "Active",
+      "Expired"
+    ],
+    "AttachmentAction": [
+      "Scan",
+      "ManualUpload",
+      "ApiUpload",
+      "IpCameraPicture",
+      "YardTask"
+    ],
+    "AttachmentType": [
+      "Document",
+      "Picture",
+      "Miscellaneous"
+    ],
+    "CertifiedPersonSearchObject": [
+      "SystemField"
+    ],
+    "LocationStatus": [
+      "OffSite",
+      "OnSite"
+    ],
+    "ObjectType": [
+      "Visitor",
+      "Asset"
+    ],
+    "TaskSearchObject": [
+      "SystemField",
+      "CustomField"
+    ],
+    "TimestampFilterField": [
+      "SlotStart",
+      "CheckedIn",
+      "Arrived",
+      "Departed"
+    ],
+    "VisitorSearchObject": [
+      "SystemField",
+      "CustomField",
+      "CurrentHost"
+    ],
+    "VisitorStatus": [
+      "Logged",
+      "WaitingForApproval",
+      "WaitingSequence",
+      "WaitingForDispatch",
+      "CheckedIn",
+      "CheckedOut",
+      "Blocked",
+      "WaitingForDocuments",
+      "ReadyForCheckout"
+    ],
+    "YardOperation": [
+      "LiveLoading",
+      "FullPickup",
+      "EmptyPickup",
+      "FullDropOff",
+      "EmptyDropOff",
+      "FullDropOffAndFullPickUp",
+      "FullDropOffAndEmptyPickup",
+      "EmptyDropOffAndFullPickUp",
+      "EmptyDropOffAndEmptyPickup"
+    ]
+  },
+  "note": "Chemins GET uniquement. Liste blanche du serveur MCP peripass (lecture seule). Le contrat expose 60 operations, dont 18 en GET : les 42 autres ecrivent dans le yard (creer un visiteur, changer un statut, deplacer un asset) et ne sont pas exposees.",
+  "openapi": "3.0.2",
+  "page_size_max": 100,
+  "paths": {
+    "/assets": {
+      "operationId": "getAssets",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "If provided, only assets that have changed since the given datetime are returned. Format: 2023-01-01T00:00:00+00:00 (url encoding for '+' = '%2B'). If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "updatedSince",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "",
+          "enum": [
+            "SystemField",
+            "CustomField"
+          ],
+          "in": "query",
+          "name": "searchObject",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "For 'searchObject' equal to SystemField, the 'searchField' must be a property that exists in the system default configuration (DisplayName, Status, or Category). For 'searchObject' equal to CustomField, the 'searchField' must be the technical name of a custom field. SearchField is case sensitive.",
+          "enum": null,
+          "in": "query",
+          "name": "searchField",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "matches the exact value for the selected searchField parameter. SearchText is case sensitive",
+          "enum": null,
+          "in": "query",
+          "name": "searchText",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "summary": "get assets, paginated"
+    },
+    "/assets/{id}": {
+      "operationId": "getAssetById",
+      "parameters": [
+        {
+          "description": "id of the asset",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get a asset by id"
+    },
+    "/certifiedpersons": {
+      "operationId": "getCertifiedPersons",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "If provided, only certified persions that have changed since the given datetime are returned. Format: 2023-01-01T00:00:00+00:00 (url encoding for '+' = '%2B'). If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "updatedSince",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "",
+          "enum": [
+            "Active",
+            "Archived",
+            "All"
+          ],
+          "in": "query",
+          "name": "filter",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "",
+          "enum": [
+            "SystemField"
+          ],
+          "in": "query",
+          "name": "searchObject",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "For 'searchObject' equal to SystemField, the 'searchField' must be a property that exists in the system default configuration (IdentificationNumber or PhoneNumber). SearchField is case sensitive.",
+          "enum": null,
+          "in": "query",
+          "name": "searchField",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "matches the exact value for the selected searchField parameter. SearchText is case sensitive",
+          "enum": null,
+          "in": "query",
+          "name": "searchText",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "summary": "get certified persons, paginated"
+    },
+    "/certifiedpersons/{id}": {
+      "operationId": "getCertifiedPersonsById",
+      "parameters": [
+        {
+          "description": "id of the certified person",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get certified person by id"
+    },
+    "/dispatchdashboards": {
+      "operationId": "getDispatchDashboards",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get all dispatch dashboards, paginated"
+    },
+    "/profiles": {
+      "operationId": "getProfiles",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "name",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "summary": "get all profiles, paginated"
+    },
+    "/selfservicekiosks": {
+      "operationId": "getSelfServiceKiosks",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get all self service kiosks, paginated"
+    },
+    "/tasks": {
+      "operationId": "getTasks",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "If provided, only tasks that have changed since the given datetime are returned. Format: 2023-01-01T00:00:00+00:00 (url encoding for '+' = '%2B'). If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "updatedSince",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "",
+          "enum": [
+            "SystemField",
+            "CustomField"
+          ],
+          "in": "query",
+          "name": "searchObject",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "For 'searchObject' equal to SystemField, the 'searchField' must be a property that exists in the system default configuration (TaskTemplateId, Status, or AssignedOperatorId). For 'searchObject' equal to CustomField, the 'searchField' must be the technical name of a custom field. SearchField is case sensitive.",
+          "enum": null,
+          "in": "query",
+          "name": "searchField",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "matches the exact value for the selected searchField parameter. SearchText is case sensitive",
+          "enum": null,
+          "in": "query",
+          "name": "searchText",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "summary": "get tasks, paginated"
+    },
+    "/tasks/{id}": {
+      "operationId": "getTaskById",
+      "parameters": [
+        {
+          "description": "id of the task",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get a task by id"
+    },
+    "/visitors": {
+      "operationId": "getVisitors",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "If provided, only visitors that have changed since the given datetime are returned. Format: 2023-01-01T00:00:00+00:00 (url encoding for '+' = '%2B'). If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "updatedSince",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "If provided, only visitors that have a profile validity after the given date are returned. Format: 2023-01-01. If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "validityFrom",
+          "required": false,
+          "type": "date"
+        },
+        {
+          "description": "If provided, only visitors that have a profile validity before the given date are returned. Format: 2023-01-01. If format is incorrect we will ignore the filter.",
+          "enum": null,
+          "in": "query",
+          "name": "validityUntil",
+          "required": false,
+          "type": "date"
+        },
+        {
+          "description": "Specifies the type of datetime field (e.g., SlotStart, Arrived, CheckedIn, Departed) that will be used to filter visitors. This works in conjunction with the timestampFilterStart and timestampFilterEnd parameters to limit results based on the selected datetime range.",
+          "enum": [
+            "SlotStart",
+            "CheckedIn",
+            "Arrived",
+            "Departed"
+          ],
+          "in": "query",
+          "name": "timestampFilterField",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "Filters visitors by the start of the datetime range, as specified by the timestampFilterField. The provided datetime should be in ISO 8601 format: YYYY-MM-DDTHH:MM:SS±HH:MM (e.g., 2023-01-01T00:00:00+02:00, 2023-01-01T00:00:00Z). Please note that the '+' character in the timezone should be URL-encoded as %2B.",
+          "enum": null,
+          "in": "query",
+          "name": "timestampFilterStart",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "Filters visitors by the end of the datetime range, as specified by the timestampFilterField. The provided datetime should be in ISO 8601 format: YYYY-MM-DDTHH:MM:SS±HH:MM (e.g., 2023-01-01T00:00:00+00:00, 2023-01-01T00:00:00Z). Please note that the '+' character in the timezone should be URL-encoded as %2B.",
+          "enum": null,
+          "in": "query",
+          "name": "timestampFilterEnd",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "description": "If provided, only visitors with a profile assigned to this site are returned",
+          "enum": null,
+          "in": "query",
+          "name": "siteId",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "description": "If provided, only visitors in this visitor status are returned.",
+          "enum": [
+            "Logged",
+            "WaitingForApproval",
+            "WaitingSequence",
+            "WaitingForDispatch",
+            "CheckedIn",
+            "CheckedOut",
+            "Blocked",
+            "WaitingForDocuments",
+            "ReadyForCheckout"
+          ],
+          "in": "query",
+          "name": "status",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "",
+          "enum": [
+            "SystemField",
+            "CustomField",
+            "CurrentHost"
+          ],
+          "in": "query",
+          "name": "searchObject",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "For 'searchObject' equal to SystemField, the 'searchField' must be a property that exists in the system default configuration (Pincode/Status/CurrentLocation). For 'searchObject' equal to CustomField, the 'searchField' must be the technical name of a custom field. For 'searchObject' equal to CurrentHost, the 'searchField' must be a property from the Host (Name, Email or Mobile). The current host of a visitor is the host of the profile for the current day, the first profile in the future or the host that has created the visitor. SearchField is case sensitive.",
+          "enum": null,
+          "in": "query",
+          "name": "searchField",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "matches the exact value for the selected searchField parameter. SearchText is case sensitive",
+          "enum": null,
+          "in": "query",
+          "name": "searchText",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "summary": "get visitors, paginated"
+    },
+    "/visitors/validateeticket": {
+      "operationId": "ValidateETicket",
+      "parameters": [
+        {
+          "description": "eTicket guid of the visitor",
+          "enum": null,
+          "in": "query",
+          "name": "eTicket",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "id of the device",
+          "enum": null,
+          "in": "query",
+          "name": "deviceId",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "API key should be provided as query string parameter instead of header",
+          "enum": null,
+          "in": "query",
+          "name": "apiKey",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "summary": "validate E-ticket"
+    },
+    "/visitors/{id}/alloweddocumenttypes": {
+      "operationId": "getAllowedDocumentTypes",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get all active document types for a visitor, paginated"
+    },
+    "/visitors/{id}/assignedprofiles": {
+      "operationId": "getAssignedProfiles",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get all the assigned profiles for a visitor, paginated"
+    },
+    "/visitors/{id}/attachments": {
+      "operationId": "getAttachments",
+      "parameters": [
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get all attachments for a visitor, paginated"
+    },
+    "/visitors/{id}/attachments/{attachmentId}/download": {
+      "operationId": "DownloadAttachment",
+      "parameters": [
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "id of attachment (Guid)",
+          "enum": null,
+          "in": "path",
+          "name": "attachmentId",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "summary": "download visitor attachment"
+    },
+    "/visitors/{id}/dispatchdashboardinfo": {
+      "operationId": "getVisitordispatchDashboardInfoById",
+      "parameters": [
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get the dispatchdashboardinfo for a visitor by id"
+    },
+    "/visitors/{id}/history": {
+      "operationId": "getHistoryForVisitor",
+      "parameters": [
+        {
+          "description": "id of the visitor",
+          "enum": null,
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "zero based",
+          "enum": null,
+          "in": "query",
+          "name": "pageNumber",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "",
+          "enum": null,
+          "in": "query",
+          "name": "pageSize",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "summary": "get the history of a visitor, paginated"
+    },
+    "/visitors/{reference}": {
+      "operationId": "getVisitorByReference",
+      "parameters": [
+        {
+          "description": "The unique reference of a visitor. This consists of two parts: the type of identifier and the value of the identifier, separated by a colon. The identifier of the Peripass technical id is \"id\". A custom field can be used as an identifier. In this case the technical name of that custom field should be used. Examples: \"id:10\" or \"tms_id:90\". If no identifier is provided, the Peripass technical id will be used by default. <br> <br> The reference cannot contain a : or . character. The reference can contain other special characters (like a _ or a - or a space), however these should be url-encoded.",
+          "enum": null,
+          "in": "path",
+          "name": "reference",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "summary": "get a visitor based on a custom id"
+    }
+  },
+  "released": "2026-08-28",
+  "server": "https://restapiprd.peripass.app/api/v2",
+  "source": "https://restapiprd.peripass.app/documentation/v2.0/PeripassRestApi.yaml"
+}

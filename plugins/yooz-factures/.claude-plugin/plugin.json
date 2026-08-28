@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "yooz-factures",
   "displayName": "Yooz - factures fournisseurs (lecture seule)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Interroge la base de factures Yooz des societes du groupe en lecture seule : historique rapatrie dans un cache local et interrogeable en SQL, plus les requetes directes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). 17 outils.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
@@ -20,53 +20,53 @@
     "companies": {
       "type": "string",
       "title": "Societes Yooz a interroger",
-      "description": "Cles de societe separees par une virgule. Par defaut : distriservice,vente_unique. Ne garde que celles dont tu as les identifiants ; pour une societe qui n'est pas dans cette liste, passe par un fichier yooz.env (voir le README du plugin).",
+      "description": "Laisse vide dans le cas normal : la liste d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. Ne la renseigne que pour RESTREINDRE aux societes dont tu as les identifiants - cles separees par une virgule.",
       "required": false,
       "default": "distriservice,vente_unique"
     },
     "report_id": {
       "type": "string",
       "title": "Identifiant du rapport factures",
-      "description": "UUID du data report Yooz qui porte les factures. Valeur d'equipe pre-remplie. L'outil yooz_reports liste les rapports disponibles si tu en cherches un autre.",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. L'outil yooz_reports liste les rapports disponibles si tu en cherches un autre.",
       "required": false,
       "default": "1faf71e2-3c8b-4b4e-a94b-3acc79436153"
     },
     "distriservice_application_id": {
       "type": "string",
       "title": "DistriService - applicationId",
-      "description": "Identifiant de l'application Yooz (en-tete HTTP applicationId). Attention : ce n'est PAS le client_id.",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. A ne renseigner que si /yooz-setup dit que la config d'equipe est introuvable. Attention : ce n'est PAS le client_id - une erreur ici rend un 403 EMPTY_OR_BAD_APPLICATION_ID.",
       "required": false
     },
     "distriservice_client_id": {
       "type": "string",
       "title": "DistriService - client_id",
-      "description": "Identifiant du client API Yooz de cette societe.",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. A ne renseigner que si /yooz-setup dit que la config d'equipe est introuvable.",
       "required": false
     },
     "distriservice_client_secret": {
       "type": "string",
       "title": "DistriService - client_secret",
-      "description": "Secret du client API. Reste sur ton poste, dans le coffre du systeme : ni versionne, ni partage, ni ecrit dans le drive d'equipe.",
+      "description": "A SAISIR. C'est un secret : il reste sur ton poste, dans le coffre du systeme - ni versionne, ni partage, ni ecrit dans le drive d'equipe. Le poser dans la config d'equipe ne marcherait pas : le serveur l'y ignore.",
       "required": false,
       "sensitive": true
     },
     "distriservice_refresh_token": {
       "type": "string",
       "title": "DistriService - refresh token",
-      "description": "Jeton offline genere dans Yooz. Meme regle : il reste sur ton poste.",
+      "description": "A SAISIR. Jeton offline genere dans Yooz. Meme regle : c'est un secret, il reste sur ton poste.",
       "required": false,
       "sensitive": true
     },
     "vente_unique_application_id": {
       "type": "string",
       "title": "Vente-Unique - applicationId",
-      "description": "Identifiant de l'application Yooz de Vente-Unique (en-tete HTTP applicationId).",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. A ne renseigner que si /yooz-setup dit que la config d'equipe est introuvable. Ce n'est PAS le client_id.",
       "required": false
     },
     "vente_unique_client_id": {
       "type": "string",
       "title": "Vente-Unique - client_id",
-      "description": "Identifiant du client API Yooz de cette societe.",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. A ne renseigner que si /yooz-setup dit que la config d'equipe est introuvable.",
       "required": false
     },
     "vente_unique_client_secret": {
@@ -86,7 +86,7 @@
     "base_url": {
       "type": "string",
       "title": "Racine de l'API (optionnel)",
-      "description": "Par defaut https://eu1.getyooz.com. A changer seulement pour une autre region Yooz ou un environnement de recette.",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/yooz.shared.env. A ne renseigner que pour surcharger ce reglage sur ce poste.",
       "required": false
     },
     "export_dir": {

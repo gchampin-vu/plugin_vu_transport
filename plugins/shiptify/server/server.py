@@ -247,9 +247,228 @@ def _load_env_file() -> None:
         return
 
 
+# --------------------------------------------------------------------------
+# La configuration d'equipe : le fichier partage de 08_ENGINE
+# --------------------------------------------------------------------------
+#
+# Ce fichier porte TOUT ce qui est commun a l'equipe : le reglage - racine de
+# l'API, schema d'authentification, plafond de pagination - **et la cle d'API**.
+#
+# Decision d'equipe du 2026-08-28. La cle Shiptify est une cle de service
+# partagee : elle n'identifie personne, toute l'equipe la connait deja, et la
+# faire ressaisir vingt-six fois n'ajoutait aucune protection - seulement
+# vingt-six mises en service qui echouent et une rotation impossible a
+# propager. Elle est donc posee une fois dans le fichier d'equipe.
+#
+# Ce que ca implique, et qu'il faut assumer : la bibliotheque est lisible par
+# toute l'equipe L&T, donc la cle l'est aussi. Le jour ou elle doit cesser de
+# l'etre - une cle nominative, un prestataire externe, un audit - la reponse est
+# la configuration du plugin sur le poste, qui passe DEVANT le fichier d'equipe
+# (voir _env), pas le retrait de cette ligne.
+#
+# La liste blanche RESTE, mais elle a change d'objet : ce n'est plus une
+# barriere anti-secret, c'est un garde-fou contre la faute de frappe. Une cle
+# mal orthographiee posee dans le fichier serait sinon ignoree en silence, et on
+# chercherait longtemps pourquoi le reglage d'equipe ne prend pas. Elle est
+# refusee **et signalee** par /shiptify-setup.
+#
+# Ce qui n'a toujours pas sa place ici : un chemin local. SHIPTIFY_EXPORT_DIR
+# reste dans la liste par compatibilite, mais doit rester vide - un chemin
+# d'export valable sur un poste n'existe pas sur les vingt-cinq autres.
+
+SHARED_FILE_NAME = "shiptify.shared.env"
+ENGINE_DIR_NAME = "08_ENGINE"
+SHARED_SUBPATH = ("04_mcp", "00_config")
+
+SHARED_ALLOWED_KEYS = frozenset(
+    {
+        "SHIPTIFY_BASE_URL",
+        "SHIPTIFY_AUTH_PREFIX",
+        "SHIPTIFY_ACCOUNT_ID",
+        "SHIPTIFY_MAX_PAGES",
+        "SHIPTIFY_TIMEOUT_S",
+        "SHIPTIFY_EXPORT_DIR",
+        # La cle de service de l'equipe. Autorisee ici le 2026-08-28.
+        "SHIPTIFY_API_KEY",
+    }
+)
+
+# Les cles du fichier d'equipe dont la VALEUR ne s'affiche jamais, meme dans un
+# diagnostic. Le NOM de la cle, lui, se dit : c'est ce qui permet de savoir d'ou
+# vient la valeur active sans la reveler.
+SHARED_SECRET_KEYS = frozenset({"SHIPTIFY_API_KEY"})
+
+_SHARED_CACHE: dict[str, str] | None = None
+_SHARED_LOADED_FROM: str = ""
+# Cles ignorees a la lecture, parce qu'absentes de la liste blanche. Remontees
+# par setup_status : c'est presque toujours une faute de frappe, et elle ne se
+# voit nulle part ailleurs.
+_SHARED_REJECTED: list[str] = []
+
+
+def _engine_roots() -> list[pathlib.Path]:
+    """Racines `08_ENGINE` plausibles, dans l'ordre de preference.
+
+    Le plugin est installe depuis `08_ENGINE/03_plugins/...`, mais Claude Code
+    en fait une copie dans `~/.claude/plugins/`. On ne peut donc pas se
+    contenter de remonter depuis le code : on remonte quand meme (cas de
+    l'installation directe depuis la bibliotheque), et on complete par le
+    profil utilisateur, ou OneDrive synchronise la bibliotheque d'equipe.
+    """
+    out: list[pathlib.Path] = []
+
+    def add(path: pathlib.Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        if resolved not in out:
+            out.append(resolved)
+
+    explicit = (os.environ.get("VU_ENGINE_DIR") or "").strip()
+    if explicit:
+        add(pathlib.Path(explicit))
+
+    # Remontee : le code tourne peut-etre encore dans la bibliotheque.
+    starts = [pathlib.Path(__file__).resolve()]
+    plugin_root = (os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip()
+    if plugin_root:
+        starts.append(pathlib.Path(plugin_root))
+    for start in starts:
+        for parent in start.parents:
+            if parent.name == ENGINE_DIR_NAME:
+                add(parent)
+                break
+
+    # Profil utilisateur : OneDrive pose la bibliotheque d'equipe sous
+    # <profil>\CAFOM\<bibliotheque>\. Le nom exact de la bibliotheque varie
+    # d'un poste a l'autre, on ne le devine pas, on le cherche.
+    home = pathlib.Path.home()
+    for pattern in ("CAFOM/*/" + ENGINE_DIR_NAME, "*/CAFOM/*/" + ENGINE_DIR_NAME):
+        try:
+            for hit in sorted(home.glob(pattern)):
+                if hit.is_dir():
+                    add(hit)
+        except OSError:
+            continue
+    return out
+
+
+def _shared_env_candidates() -> list[pathlib.Path]:
+    """Emplacements du fichier d'equipe essayes, dans l'ordre."""
+    out: list[pathlib.Path] = []
+    explicit = (os.environ.get("SHIPTIFY_SHARED_ENV") or "").strip()
+    if explicit:
+        out.append(pathlib.Path(explicit))
+    for root in _engine_roots():
+        out.append(root.joinpath(*SHARED_SUBPATH, SHARED_FILE_NAME))
+    return out
+
+
+def _load_shared_env() -> dict[str, str]:
+    """Lit le premier fichier d'equipe trouve, filtre par la liste blanche.
+
+    Ne leve jamais : un fichier d'equipe absent, illisible ou mal rempli ne
+    doit pas empecher le connecteur de tourner sur la configuration du poste.
+    Ce qui a ete refuse est garde de cote pour que setup_status le dise.
+
+    Les valeurs lues ne sont PAS versees dans os.environ : elles restent dans ce
+    cache, et c'est _env qui va les chercher en dernier recours. La cle d'equipe
+    n'apparait donc pas dans l'environnement du processus, ni dans ce qu'un
+    sous-processus en heriterait.
+    """
+    global _SHARED_CACHE, _SHARED_LOADED_FROM, _SHARED_REJECTED
+    if _SHARED_CACHE is not None:
+        return _SHARED_CACHE
+    values: dict[str, str] = {}
+    rejected: list[str] = []
+    for path in _shared_env_candidates():
+        try:
+            if not path.is_file():
+                continue
+            raw = _parse_env(path.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        for key, val in raw.items():
+            upper = key.strip().upper()
+            if upper in SHARED_ALLOWED_KEYS:
+                if val.strip():
+                    values[upper] = val.strip()
+            else:
+                rejected.append(upper)
+        _SHARED_LOADED_FROM = str(path)
+        break
+    _SHARED_REJECTED = rejected
+    _SHARED_CACHE = values
+    return values
+
+
+def _shared_report() -> list[str]:
+    """Les lignes que setup_status et doctor affichent sur le fichier d'equipe."""
+    shared = _load_shared_env()
+    lines: list[str] = []
+    if _SHARED_LOADED_FROM:
+        lines.append(f"Config d'equipe      : {_SHARED_LOADED_FROM}")
+        lines.append(
+            "  reglages repris    : "
+            + (", ".join(sorted(shared)) if shared else "(aucun)")
+        )
+        secrets = sorted(k for k in shared if k in SHARED_SECRET_KEYS)
+        if secrets:
+            lines.append(
+                "  dont secrets       : "
+                + ", ".join(secrets)
+                + " (valeur jamais affichee ; retenue seulement si ce poste "
+                "n'en definit pas)"
+            )
+    else:
+        lines.append("Config d'equipe      : aucune (valeurs par defaut du serveur)")
+        for path in _shared_env_candidates():
+            lines.append(f"    absent  {path}")
+    if _SHARED_REJECTED:
+        lines.append("")
+        lines.append(
+            "  ATTENTION : le fichier d'equipe porte des cles que ce serveur ne "
+            "connait pas, elles ont ete IGNOREES : "
+            + ", ".join(sorted(set(_SHARED_REJECTED)))
+            + "."
+        )
+        lines.append(
+            "  Dans la quasi-totalite des cas, c'est une faute de frappe dans "
+            "le nom de la variable : compare avec .env.example. Une cle ignoree "
+            "ne produit aucune erreur ailleurs - c'est ici, et seulement ici, "
+            "que ca se voit."
+        )
+    return lines
+
+
 def _env(name: str, default: str = "") -> str:
+    """La valeur retenue pour un reglage, dans un ordre de priorite fixe.
+
+    1. l'environnement du processus - la configuration du plugin, et le .env
+       local que _load_env_file y a deja verse : ce que ce poste a decide ;
+    2. le fichier d'equipe de 08_ENGINE - ce que l'equipe a decide ;
+    3. la valeur par defaut du serveur.
+
+    Le poste passe donc devant l'equipe, et non l'inverse : un reglage
+    d'equipe est un point de depart commun, pas une contrainte. C'est aussi ce
+    qui permet a quelqu'un de tester une racine d'API de recette sans toucher
+    au fichier partage.
+
+    Depuis le 2026-08-28, cet ordre vaut aussi pour SHIPTIFY_API_KEY : la cle
+    de service de l'equipe vient du niveau 2. Une cle saisie dans la
+    configuration du plugin l'emporte donc, et c'est la sortie a utiliser pour
+    un acces nominatif ou de recette - on ne retire pas la ligne du fichier
+    partage, on la surcharge sur son poste.
+    """
     _load_env_file()
-    return (os.environ.get(name) or default).strip()
+    from_process = (os.environ.get(name) or "").strip()
+    if from_process:
+        return from_process
+    from_team = _load_shared_env().get(name, "").strip()
+    if from_team:
+        return from_team
+    return default.strip()
 
 
 def _api_key() -> str:
@@ -336,9 +555,17 @@ def _export_dir() -> pathlib.Path:
 
 
 def _key_source() -> str:
-    """D'ou sort la cle : la premiere question quand ca ne marche pas."""
+    """D'ou sort la cle : la premiere question quand ca ne marche pas.
+
+    Trois origines possibles depuis le 2026-08-28, et il faut savoir laquelle :
+    une cle d'equipe qui ne marche plus se corrige dans 08_ENGINE, pour tout le
+    monde ; une cle de poste se corrige dans /plugin, pour soi seul.
+    """
     _load_env_file()
     if not os.environ.get("SHIPTIFY_API_KEY"):
+        # Rien sur le poste : la cle vient peut-etre du fichier d'equipe.
+        if _load_shared_env().get("SHIPTIFY_API_KEY"):
+            return f"config d'equipe ({_SHARED_LOADED_FROM})"
         return "(aucune)"
     if "SHIPTIFY_API_KEY" in _ENV_FILE_KEYS:
         return f"fichier {_ENV_LOADED_FROM}"
@@ -787,6 +1014,7 @@ def shiptify_setup_status() -> str:
     lines.append(
         f"Cle rangee           : {'oui, ' + _mask(stored) if stored else 'non'}"
     )
+    lines.extend(_shared_report())
     if active and stored and _fingerprint(active) != _fingerprint(stored):
         lines.append("")
         lines.append(
@@ -798,7 +1026,16 @@ def shiptify_setup_status() -> str:
 
     lines.append("")
     if not active:
-        lines.append("A FAIRE - saisir la cle, dans l'interface de Claude Code :")
+        lines.append(
+            "Rien d'actif. Le cas normal etant la valeur d'equipe, commence par "
+            "la ligne « Config d'equipe » ci-dessus : si elle dit « aucune », "
+            "c'est que 08_ENGINE/04_mcp/00_config n'est pas atteignable depuis "
+            "ce poste (bibliotheque non synchronisee, ou posee ailleurs). "
+            "Synchronise-la, ou pointe-la avec VU_ENGINE_DIR ou "
+            "SHIPTIFY_SHARED_ENV. C'est la correction dans neuf cas sur dix."
+        )
+        lines.append("")
+        lines.append("A DEFAUT - saisir la valeur dans l'interface de Claude Code :")
         lines.append("")
         if plugin_mode:
             lines.append("  1. tape /plugin")
@@ -830,7 +1067,29 @@ def shiptify_setup_status() -> str:
             )
         return "\n".join(lines)
 
-    if not stored:
+    from_team = bool(
+        _load_shared_env().get("SHIPTIFY_API_KEY")
+        and not os.environ.get("SHIPTIFY_API_KEY")
+    )
+    if from_team:
+        lines.append(
+            "La cle active est celle de l'equipe, lue dans 08_ENGINE. Il n'y a "
+            "RIEN a saisir sur ce poste : verifie la connexion avec "
+            "shiptify_doctor et c'est fini."
+        )
+        lines.append("")
+        lines.append(
+            "  Deux cas ou tu saisirais quand meme quelque chose dans /plugin : "
+            "un acces nominatif, ou un environnement de recette. Ce que le "
+            "poste definit passe devant l'equipe, sans toucher au fichier "
+            "partage."
+        )
+        lines.append(
+            "  shiptify_save_key n'est utile que pour rendre ce poste autonome "
+            "de la bibliotheque synchronisee : il recopie en local la valeur "
+            "active."
+        )
+    elif not stored:
         lines.append(
             "La cle est saisie mais n'est PAS rangee sur la machine. Appelle "
             "shiptify_save_key pour l'ecrire dans le magasin local : elle "

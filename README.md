@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-27
+updated: 2026-08-28
 updated_by: Guillaume_Champin
 type: process
 ---
@@ -14,10 +14,7 @@ jour tout seul ensuite.
 | --- | --- | --- |
 | `shiptify` | Serveur MCP en lecture seule sur la base Shiptify (17 outils) + une skill qui sait s'en servir | recette passee contre la production le 2026-08-27 |
 | `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (17 outils) + une skill. Historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-27 (31 controles). **Pas encore confronte au vrai Yooz** : les identifiants disponibles sont a regenerer d'abord |
-
-Les autres connecteurs de `08_ENGINE/04_mcp/` (`mcp_powerbi`, `mcp_teams`) ne sont **pas**
-encore empaquetes. Le catalogue est fait pour les accueillir : un dossier sous
-`plugins/`, une entree dans `marketplace.json`.
+| `peripass` | Serveur MCP en lecture seule sur le yard management Peripass (20 outils) + une skill. **Multi-tenant** : une cle par site, AUV et AMB interroges ensemble, une colonne `site` sur chaque resultat | teste hors reseau le 2026-08-28 (82 controles), handshake MCP et chaine HTTP verifies contre les deux hotes de production. **Pas encore confronte a un tenant avec une cle valide** : les cles du script Power Query sont a faire tourner d'abord |
 
 ## Pourquoi un plugin plutot qu'un `claude mcp add`
 
@@ -53,26 +50,38 @@ Puis, dans les deux cas :
 ```bash
 /plugin install shiptify@vu-transport
 /plugin install yooz-factures@vu-transport
+/plugin install peripass@vu-transport
 ```
 
-Claude Code demande alors les identifiants : la **cle d'API Shiptify**, et pour
+Claude Code demande alors les identifiants : la **cle d'API Shiptify**, pour
 Yooz les quatre valeurs de chaque societe (`applicationId`, `client_id`,
-`client_secret`, refresh token). **Tout reste sur le poste du collegue** : les
+`client_secret`, refresh token), et pour Peripass **une cle par site** — AUV et
+AMB sont deux tenants distincts. **Tout reste sur le poste du collegue** : les
 champs marques `sensitive` sont collectes par Claude Code lui-meme, rien n'est
 versionne, partage, ni ecrit dans le drive d'equipe.
 
 ### La saisie peut attendre
 
-Aucun identifiant Shiptify n'est **obligatoire** a l'installation : on peut
-installer d'abord et configurer a la premiere utilisation. Dans une session,
-une commande guide de bout en bout :
+Aucun identifiant n'est **obligatoire** a l'installation : on peut installer
+d'abord et configurer a la premiere utilisation. Dans une session, une commande
+par connecteur guide de bout en bout :
 
 ```bash
 /shiptify-setup
 ```
 
-Elle regarde ou on en est, dit exactement ou saisir la cle si elle manque, la
-range sur la machine, teste la connexion et fait un appel de demonstration.
+```bash
+/peripass-setup
+```
+
+Elles regardent ou on en est, disent exactement ou saisir la cle si elle
+manque, la rangent sur la machine, testent la connexion et font un appel de
+demonstration.
+
+Cote Peripass, cette commande a un role de plus : **une seule cle saisie donne
+un connecteur qui repond mais ne couvre que la moitie du perimetre.** Elle le
+verifie, et elle montre du meme geste si les deux sites portent les memes
+champs personnalises.
 
 Pour saisir ou corriger un identifiant a la main, a tout moment : `/plugin` >
 le plugin > configuration. Le serveur reprend la valeur au demarrage suivant de
@@ -80,9 +89,9 @@ la session.
 
 **La saisie se fait toujours dans l'interface de Claude Code, jamais dans la
 conversation.** C'est ce que le champ `sensitive` garantit : la valeur n'entre
-ni dans le contexte du modele, ni dans la transcription. Aucun outil des deux
-plugins n'accepte un secret en parametre - `shiptify_save_key` ne prend aucun
-argument, il range la cle deja saisie.
+ni dans le contexte du modele, ni dans la transcription. Aucun outil des trois
+plugins n'accepte un secret en parametre - `shiptify_save_key` et
+`peripass_save_key` ne prennent aucun argument, ils rangent la cle deja saisie.
 
 Verifier que tout repond, dans une session :
 
@@ -90,17 +99,20 @@ Verifier que tout repond, dans une session :
 
 > lance yooz_status
 
+> lance peripass_doctor
+
 Ils disent d'ou vient la configuration, si l'API repond, et ce que le serveur a
 lu. C'est le premier outil a appeler quand quelque chose coince. Cote Yooz, il
 faut ensuite un premier rapatriement, une fois :
 
 > fais un yooz_sync complet sur les deux societes
 
-## Ce qu'un collegue doit obtenir de Shiptify
+## Ce qu'un collegue doit obtenir des editeurs
 
-Le plugin ne donne aucun acces : il utilise **la cle du collegue**. Sans cle
-Shiptify, le plugin s'installe et ne repond rien d'utile. La demande de cle se
-fait aupres de Shiptify, par le canal habituel.
+Aucun de ces plugins ne donne d'acces : ils utilisent **les identifiants du
+collegue**. Sans cle, un plugin s'installe et ne repond rien d'utile. La demande
+se fait aupres de l'editeur, par le canal habituel — et **cote Peripass, il en
+faut deux** : une par tenant, AUV et AMB.
 
 ## Publier, cote equipe
 
@@ -159,22 +171,53 @@ plugin_vu_transport/
 │   │   │   └── .env.example
 │   │   ├── skills/shiptify/SKILL.md   quand et comment interroger Shiptify
 │   │   └── README.md             la doc du connecteur
-│   └── yooz-factures/
+│   ├── yooz-factures/
+│   │   ├── .claude-plugin/
+│   │   │   └── plugin.json       manifeste + userConfig (4 secrets par societe)
+│   │   ├── .mcp.json             declaration du serveur MCP
+│   │   ├── server/               le code du connecteur
+│   │   │   ├── bootstrap.py      amorce : meme structure que celle de shiptify
+│   │   │   ├── server.py         le serveur MCP, 17 outils, lecture seule
+│   │   │   ├── test_offline.py   31 controles, sans reseau
+│   │   │   ├── requirements.txt
+│   │   │   ├── install.ps1       installation directe, hors plugin
+│   │   │   └── .env.example
+│   │   ├── skills/factures-yooz/SKILL.md   quand et comment interroger Yooz
+│   │   └── README.md             la doc du connecteur
+│   └── peripass/
 │       ├── .claude-plugin/
-│       │   └── plugin.json       manifeste + userConfig (4 secrets par societe)
+│       │   └── plugin.json       manifeste + userConfig (une cle PAR SITE)
 │       ├── .mcp.json             declaration du serveur MCP
+│       ├── commands/peripass-setup.md      la mise en service guidee
 │       ├── server/               le code du connecteur
 │       │   ├── bootstrap.py      amorce : meme structure que celle de shiptify
-│       │   ├── server.py         le serveur MCP, 17 outils, lecture seule
-│       │   ├── test_offline.py   31 controles, sans reseau
+│       │   ├── server.py         le serveur MCP, 20 outils, lecture seule
+│       │   ├── openapi_get_paths.json   liste blanche des 18 chemins GET
+│       │   ├── test_offline.py   82 controles, sans reseau ni cle
 │       │   ├── requirements.txt
 │       │   ├── install.ps1       installation directe, hors plugin
-│       │   └── .env.example
-│       ├── skills/factures-yooz/SKILL.md   quand et comment interroger Yooz
+│       │   └── peripass.env.example
+│       ├── skills/peripass/SKILL.md   quand et comment interroger Peripass
 │       └── README.md             la doc du connecteur
 ├── .gitignore
 └── README.md                     ce fichier
 ```
+
+### Ce que le troisieme connecteur a apporte au format
+
+`peripass` est le premier connecteur **multi-tenant** du catalogue : Peripass
+n'a pas une base mais une par site. Trois choses ont ete ajoutees au patron
+commun, et elles resserviront :
+
+- **un parametre `site` sur chaque outil**, une colonne `site` sur chaque
+  resultat, et un `max_rows` qui s'applique **par site**. Un rendu ou un site
+  n'a pas repondu se declare **PARTIEL** ;
+- **un joker de prefixe dans la projection de colonnes** (`fields.*`). Les
+  champs personnalises d'un tenant ne se nomment pas en dur : c'est ce qui
+  cassait le script Power Query d'origine des qu'un champ etait renomme ;
+- **la validation des enums avant l'appel.** Peripass ignore **en silence** un
+  filtre mal forme et rend alors toutes les lignes. Un connecteur qui se
+  contente de relayer produirait un chiffre faux d'apparence normale.
 
 ### L'amorce, et pourquoi elle existe
 
