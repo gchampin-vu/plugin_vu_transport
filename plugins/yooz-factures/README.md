@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-27
+updated: 2026-08-28
 updated_by: Guillaume_Champin
 type: process
 ---
@@ -13,6 +13,11 @@ sait s'en servir.
 
 Il s'installe en une commande, prepare son environnement Python tout seul, et chaque
 collegue saisit ses propres identifiants dans l'interface du plugin.
+
+**Depuis la version 1.2.0, le chemin par defaut est le direct.** La grille de
+recherche du portail Yooz accepte des filtres serveur : une question sur des
+factures se repond en un appel, sur l'etat courant de Yooz, sans rien rapatrier.
+Le cache reste la, pour l'historique large, le SQL libre et les exports.
 
 Ce que ca change par rapport au script Power Query : la donnee n'est plus captive
 d'un classeur. Une question du type *"quelles factures VIR sont bloquees, pour
@@ -28,14 +33,16 @@ La surface complete de l'API v2 a ete relevee dans la **collection Postman publi
 de l'API Yooz Rising** (222 requetes, 98 GET). Deux constats commandent toute la
 conception du connecteur :
 
-1. **Il n'existe aucun endpoint de recherche de documents.** Le seul GET qui touche
-   les documents est la liste des *types* de document. `POST /documents` existe,
-   mais c'est un **import** - il n'est deliberement pas expose ici.
+1. **L'API publique v2 n'a aucun endpoint de recherche de documents.** Le seul GET
+   qui touche les documents est la liste des *types* de document. `POST /documents`
+   existe, mais c'est un **import** - il n'est deliberement pas expose ici.
+   *Nuance ajoutee le 2026-08-28 : l'API **interne du portail**, elle, en a une - la
+   grille de recherche. Voir le chemin 3.*
 2. **La donnee facture ne sort que par un data report**, sans filtre serveur : ni
    fournisseur, ni periode, ni montant. Seuls `pageOffset`, `pageSize` (1 000 max)
    et `lastExecutionDatetime` sont acceptes.
 
-D'ou **deux chemins d'acces**, exposes separement, parce qu'ils n'ont ni le meme
+D'ou **trois chemins d'acces**, exposes separement, parce qu'ils n'ont ni le meme
 cout ni le meme usage.
 
 ### Chemin 1 - l'historique, par le cache
@@ -86,6 +93,62 @@ Ce que l'API rend vite et court, sans cache :
   qui la porte.
 - `yooz_document_types`, `yooz_exports`, `yooz_export_download`.
 
+### Chemin 3 - la grille de recherche du portail, en direct et filtree
+
+**Ajoute le 2026-08-28, et c'est desormais le chemin par defaut pour une question
+sur des factures.** L'interface Yooz a bien une recherche filtree : sa grille poste
+ses criteres sur `POST /yooz/v1/core/grid/-18/data`. Ce n'est pas l'API v2 publique,
+c'est l'**API interne du portail**, relevee dans les appels du navigateur.
+
+Le point qui rend la chose exploitable : **le jeton du connecteur y est accepte**.
+Rejoue avec le client API des deux societes - et non le client `yooz-stats` du
+navigateur - l'appel repond 200. L'en-tete `siloid` du navigateur ne sert a rien, et
+les cookies de session non plus.
+
+- `yooz_live_summary` - montants et volumes agreges, par mois, par tiers, par unite,
+  par cause de blocage. **La reponse en un appel a "combien ce fournisseur nous a
+  facture sur la periode".**
+- `yooz_live_invoices` - les lignes, avec choix des colonnes parmi les 97 de la
+  grille.
+- `yooz_live_columns` - la liste de ces colonnes, lue sur
+  `POST /yooz/v1/core/grid/-18/settings`.
+
+Filtres serveur verifies un a un, en controlant que les lignes rendues respectent
+bien le filtre : tiers par code de referentiel (`eq` / `in`), date de facture et
+date d'echeance (`gte` / `lte`), montant total, numero de piece en egalite stricte,
+et blocage. `pageOffset` est un **numero de page qui commence a 1** (0 rend un 400),
+`pageSize` n'a pas de plafond apparent - le connecteur pagine par 5 000 et plafonne
+a 20 000 lignes.
+
+**Ce chemin rend le meme chiffre que le cache.** Controle du 2026-08-28 sur les
+3 303 documents DistriService de 2026 joints sur `yoozNumber` : montants identiques
+en valeur absolue, regle de signe en desaccord sur zero. Les deux seuls ecarts
+etaient deux dates de facture qui avaient bouge dans Yooz depuis la synchro de la
+veille - c'est exactement l'interet du direct.
+
+#### Les quatre pieges de cette API, et ce que le connecteur en fait
+
+1. **Un filtre qu'elle ne sait pas appliquer est IGNORE EN SILENCE.** Un `like` sur
+   `thirdPartyName` rend la grille entiere avec un HTTP 200 : le total serait faux
+   sans aucun signal. Le connecteur **refuse** ces operateurs (`like`, `contains`,
+   `startsWith`, `search`...) plutot que de laisser sortir le chiffre. Ceux qui
+   passent : `eq`, `neq`, `in`, `gte`, `lte`, `gt`, `lt`, `contextual`. Corollaire :
+   la recherche d'un tiers par son nom passe par `yooz_referential` pour obtenir son
+   code, puis par `third_code`.
+2. **Un avoir sort en POSITIF**, le sens etant porte par le type de document et non
+   par le signe - a l'inverse du data report. Le connecteur ajoute `amountSigned` et
+   `totalAmountSigned`, et n'additionne que celles-la.
+3. **`blocked=false` ne veut pas dire "non bloque".** Le filtre que poste
+   l'interface selectionne les documents qui portent un bloc de blocage : sur
+   145 documents GLS tous non bloques, il n'en rend que 8. `blocked="oui"` reste un
+   filtre serveur ; `blocked="non"` est applique cote client.
+4. **Un filtre vide rend un 404 `NO_DATA_FOUND`**, pas une liste vide. Traduit en
+   zero ligne, pas en panne.
+
+Deux differences de perimetre avec le data report : la grille porte **tous** les
+documents (`Autre document`, `Devis - Proforma`), d'ou `doc_kind="facture"`, et elle
+n'a pas le plancher d'historique du rapport.
+
 ## Ce que ca sait faire
 
 | Outil | Ce qu'il rend | Chemin |
@@ -99,6 +162,9 @@ Ce que l'API rend vite et court, sans cache :
 | `yooz_summary` | montants et volumes par tiers, societe, mois, cause de blocage | historique |
 | `yooz_sql` | SQL libre en **lecture seule** sur le cache | historique |
 | `yooz_export_csv` | ecrit le resultat d'une requete dans un CSV | historique |
+| `yooz_live_summary` | **montants et volumes agreges, en direct** - par mois, tiers, unite, cause de blocage. Avoirs comptes en negatif | grille |
+| `yooz_live_invoices` | **recherche filtree en direct** : tiers, periode, echeance, montant, numero, blocage, type de document | grille |
+| `yooz_live_columns` | les 97 colonnes de la grille, avec leur code | grille |
 | `yooz_reports` | la liste des data reports de l'application | direct |
 | `yooz_report_peek` | une page courte d'un rapport, colonnes au choix | direct |
 | `yooz_referential` | un fournisseur par son code, un comptage, ou une page de 100 | direct |
@@ -131,6 +197,17 @@ Relevee dans la collection Postman publique. Les chemins sont prefixes de
 | `GET /users`, `/users/{login}`, `/userGroups/...` | - | utilisateurs, roles, groupes |
 | `GET /elementLinks`, `/exports`, `/imports/configurations` | - | liens d'elements, configurations |
 
+**La grille du portail**, hors `/yooz/v2/api` (relevee le 2026-08-28, non
+documentee publiquement) :
+
+| Endpoint | Corps utile | Note |
+| --- | --- | --- |
+| `POST /yooz/v1/core/grid/-18/data` | `filters`, `columns`, `pageOffset` (**commence a 1**), `pageSize` | la recherche filtree de documents |
+| `POST /yooz/v1/core/grid/-18/settings` | `{}` | les 97 colonnes, les actions, le tri par defaut |
+
+Les autres identifiants de grille repondent `NOT_RIGHT_ROLE_ON_COMPONENT` ou une
+erreur interne : `-18` est la grille des documents, et c'est la seule utile ici.
+
 Les familles `{TYPE}` de referentiel, avec leur nom dans l'outil : `fournisseur`
 (`YZ_SUPPLIER`), `client` (`YZ_CUSTOMER`), `compte` (`YZ_ACCOUNT`), `cause_blocage`
 (`YZ_BLOCKING_CAUSE`), `cause_refus`, `cause_suppression`, `categorie_facture`,
@@ -151,8 +228,12 @@ connecteur qui puisse avoir un effet dans Yooz.
   token. `POST /documents`, les imports de referentiel, les `PUT` et les `DELETE`
   de l'API ne sont pas exposes. Valider, bloquer ou comptabiliser une facture reste
   un geste humain dans Yooz.
-- **Pas de recherche de facture cote serveur** : l'API ne le propose pas. Tout
-  filtre fin passe par le cache. C'est une contrainte de Yooz, pas un choix.
+- **Pas de recherche de facture sur l'API publique v2** : elle ne le propose pas.
+  C'est la grille du portail qui la fournit (chemin 3), et le cache qui prend le
+  relais pour le SQL libre et l'historique large.
+- **Pas de recherche partielle de texte, meme sur la grille** : ni nom de tiers, ni
+  numero de piece. Ces filtres existent dans le protocole mais Yooz les ignore en
+  silence, donc le connecteur les refuse. Le nom se resout par le referentiel.
 - **Pas de lignes de facture par defaut.** `YZ_INVOICE_LINE` est ecartee du cache
   (comme dans le Power Query). Deux voies si le detail devient necessaire : un data
   report dedie rapatrie dans son propre `dataset`, ou lever `YOOZ_DROP_COLUMNS`.
@@ -305,6 +386,19 @@ le vault). Le script cree aussi le `yooz.env` vide, puis affiche les commandes
 
 ## Comment l'utiliser en session
 
+**Combien ce fournisseur nous a facture, en un appel.**
+
+> Le montant des factures GLS depuis le debut de l'annee.
+
+`yooz_referential(kind="fournisseur")` pour le code du tiers (`GLS` -> `FGLS`),
+puis :
+
+```
+yooz_live_summary(group_by="mois", third_code="FGLS", date_from="2026-01-01")
+```
+
+Ni synchro, ni SQL. Les avoirs sont comptes en negatif et leur part est isolee.
+
 **Une question courte, sans rien rapatrier.**
 
 > La fiche du fournisseur T-VIR dans Yooz.
@@ -336,15 +430,26 @@ La comparaison avec l'estimation du back-office reste le travail de
 [[controle-facture]] ; ce serveur fournit le cote Yooz, cle `keyToInvoiceLines`
 comprise.
 
-**Regle de citation.** Un chiffre sorti d'ici se cite avec son perimetre et sa date
-de synchro : "3 912 factures, DistriService + Vente-Unique, synchro du 2026-08-27".
-`yooz_status` donne la date du dernier ecrit par societe.
+**Regle de citation.** Un chiffre sorti d'ici se cite avec son perimetre et sa
+source. Sur le cache, la source est la date de synchro que donne `yooz_status` ;
+sur la grille, c'est l'heure de lecture, que le connecteur met en tete de chaque
+reponse : "72 documents GLS, DistriService / VUL, du 2026-01-01 au 2026-08-28,
+2 529 242,97 EUR TTC dont 12 avoirs pour -4 960,95 - Yooz lu en direct le
+2026-08-28 a 14h43".
 
 ## Etat de la verification
 
-**Teste le 2026-08-27, hors reseau Yooz.** `server/test_offline.py` remplace les
-deux fonctions d'appel API par un faux Yooz qui repond selon le chemin, et verifie
-les deux chemins du connecteur plus le mode plugin. **31 controles, tout passe.**
+**Teste le 2026-08-28, hors reseau Yooz.** `server/test_offline.py` remplace les
+fonctions d'appel API - `_api_get`, `_api_get_bytes` et desormais `_api_post` - par
+un faux Yooz qui repond selon le chemin, et verifie les trois chemins du connecteur
+plus le mode plugin. **56 controles.**
+
+> **Trois echecs connus, anterieurs a la version 1.2.0 et non lies a elle** :
+> `substitution non resolue ignoree`, `champ vide ignore` et `societe incomplete
+> signalee`. Ils viennent de l'**isolation du test** : le fichier de reglages
+> d'equipe `08_ENGINE/04_mcp/00_config/yooz.shared.env` est trouve pendant le test
+> et fournit de vraies valeurs la ou le test attend du vide. A corriger dans le
+> harnais de test, pas dans le serveur.
 
 ```powershell
 python .\server\bootstrap.py --help    # prepare l'environnement, puis :
@@ -360,6 +465,14 @@ l'aplatissement des objets imbriques de referentiel, le telechargement d'export 
 **n'envoie pas** de marquage, et les refus attendus (SQL en ecriture, famille de
 referentiel inconnue, identifiant d'export non numerique, fichier de secrets designe
 explicitement dans un dossier synchronise).
+
+**Le chemin direct est verifie avec de vrais identifiants** (2026-08-28, societe
+DistriService et Vente-Unique) : les filtres un a un en controlant que les lignes
+rendues les respectent, le rapprochement des 3 303 documents de 2026 avec le cache,
+et le refus des operateurs ignores en silence. Hors ligne, sont verifies en plus :
+le signe des avoirs, `doc_kind`, le depart de `pageOffset` a 1, la traduction du
+404 `NO_DATA_FOUND` en zero ligne, et le fait qu'aucune colonne calculee par le
+connecteur ne soit demandee a Yooz.
 
 **Le mode plugin est teste specifiquement** : configuration lue depuis
 l'environnement, champ laisse vide ignore, **substitution `${user_config.*}` non
@@ -382,7 +495,9 @@ regenerer avant tout usage) :
 3. **La semantique de `lastExecutionDatetime`** : comparer le nombre de lignes en
    `mode="full"` et en `mode="delta"`. Si les deux sont egaux, le rapport ne porte
    pas de filtre sur cette date et `delta` n'apporte rien.
-4. Le comportement de `pageOffset` au-dela de la premiere page sur un vrai volume.
+4. ~~Le comportement de `pageOffset` au-dela de la premiere page sur un vrai
+   volume.~~ **Fait le 2026-08-28 sur la grille** : `pageOffset` y est un numero de
+   page qui commence a 1, et la pagination a ete deroulee sur 19 269 documents.
 5. Les codes de referentiel reels (`yooz_referential(kind="fournisseur")`), et la
    forme exacte des objets renvoyes - le test simule une structure plausible
    `data.dataBlocks.<BLOC>.<champ>.value`, l'aplatisseur est generique mais ses

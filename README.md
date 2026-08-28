@@ -13,7 +13,7 @@ jour tout seul ensuite.
 | Plugin | Ce qu'il apporte | Etat |
 | --- | --- | --- |
 | `shiptify` | Serveur MCP en lecture seule sur la base Shiptify (17 outils) + une skill qui sait s'en servir | recette passee contre la production le 2026-08-27 |
-| `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (17 outils) + une skill. Historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-27 (31 controles). **Pas encore confronte au vrai Yooz** : les identifiants disponibles sont a regenerer d'abord |
+| `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (20 outils) + une skill. **Recherche filtree en direct sur la grille du portail**, historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-28 (56 controles, 3 echecs connus d'isolation du test). **Chemin direct confronte au vrai Yooz le 2026-08-28** : rapproche du cache sur 3 303 documents, aucun ecart de montant |
 | `peripass` | Serveur MCP en lecture seule sur le yard management Peripass (20 outils) + une skill. **Multi-tenant** : une cle par site, AUV et AMB interroges ensemble, une colonne `site` sur chaque resultat | teste hors reseau le 2026-08-28 (82 controles), handshake MCP et chaine HTTP verifies contre les deux hotes de production. **Pas encore confronte a un tenant avec une cle valide** : les cles du script Power Query sont a faire tourner d'abord |
 
 ## Pourquoi un plugin plutot qu'un `claude mcp add`

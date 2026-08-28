@@ -143,6 +143,60 @@ def fake_api_get_bytes(company, path, params=None):
 srv._api_get = fake_api_get
 srv._api_get_bytes = fake_api_get_bytes
 
+# --- la grille de recherche du portail (chemin direct) --------------------
+# Une facture, un avoir rendu en POSITIF par la grille (c'est le cas reel), et
+# un document qui n'est pas une facture : de quoi verifier le signe et doc_kind.
+GRILLE = {
+    "DistriService": [
+        {"id": 1, "yoozNumber": 44001, "documentNumber": "FAC-2026-010",
+         "documentDate": "2026-07-31T00:00:00.000Z", "dueDate": "2026-08-31T00:00:00.000Z",
+         "thirdPartyName": "FGLS - GLS", "orgUnitName": "VUL - AMB",
+         "documentTypeName": "Facture d'achat", "amount": 1000, "totalAmount": 1200,
+         "YZ_TAX_AMOUNT_YZ_COMMONS": "200", "currency": "EUR - Euro",
+         "blockedBoolean": False, "blockingCause": "", "portalStatus": "Approuvee"},
+        {"id": 2, "yoozNumber": 44002, "documentNumber": "AV-2026-003",
+         "documentDate": "2026-07-23T00:00:00.000Z", "dueDate": "2026-08-23T00:00:00.000Z",
+         "thirdPartyName": "FGLS - GLS", "orgUnitName": "VUL - AMB",
+         "documentTypeName": "Avoir d'achat", "amount": 100, "totalAmount": 120,
+         "YZ_TAX_AMOUNT_YZ_COMMONS": "20", "currency": "EUR - Euro",
+         "blockedBoolean": False, "blockingCause": "", "portalStatus": "Approuvee"},
+        {"id": 3, "yoozNumber": 44003, "documentNumber": "DIV-1",
+         "documentDate": "2026-07-10T00:00:00.000Z", "dueDate": None,
+         "thirdPartyName": "FGLS - GLS", "orgUnitName": "VUL - AMB",
+         "documentTypeName": "Autre document", "amount": 10, "totalAmount": 10,
+         "YZ_TAX_AMOUNT_YZ_COMMONS": "0", "currency": "EUR - Euro",
+         "blockedBoolean": True, "blockingCause": "En litige", "portalStatus": "Prise en charge"},
+    ],
+    "Vente-Unique": [],
+}
+GRID_SETTINGS = {
+    "columns": [
+        {"code": "totalAmount", "type": "number", "label": "GRID.TOTAL_AMOUNT",
+         "dataBlockCode": "YZ_COMMONS", "dataItemCode": "YZ_TOTAL_AMOUNT", "sortable": True},
+        {"code": "YZ_LEDGER_YZ_INVOICE", "type": "searchSelect", "label": "Journal",
+         "dataBlockCode": "YZ_INVOICE", "dataItemCode": "YZ_LEDGER", "sortable": True,
+         "gridFilterAvailable": False},
+    ]
+}
+POSTS = []
+
+
+def fake_api_post(company, path, body):
+    POSTS.append((company.label, path, body))
+    if path.endswith("/settings"):
+        return GRID_SETTINGS
+    if path.endswith("/data"):
+        # pageOffset est un numero de page qui commence a 1.
+        if int(body.get("pageOffset", 0)) != srv.GRID_FIRST_PAGE:
+            return []
+        rows = GRILLE[company.label]
+        keep = list(body.get("columns") or [])
+        return [{k: v for k, v in row.items() if k in keep or k == "id"} for row in rows]
+    raise srv.YoozError(f"chemin POST non simule dans le test : {path}")
+
+
+srv._api_post = fake_api_post
+
 
 def show(title, value):
     print("\n" + "=" * 78)
@@ -224,6 +278,80 @@ except srv.ConfigError as exc:
     expect("fichier de secrets dans SharePoint refuse", "synchronise" in str(exc))
 del os.environ["YOOZ_ENV_FILE"]
 srv._ENV_CACHE = None
+
+
+# --- la grille de recherche : le chemin direct -----------------------------
+show("yooz_live_columns", srv.yooz_live_columns(company="distriservice"))
+show("yooz_live_invoices(GLS)", srv.yooz_live_invoices(
+    third_code="FGLS", date_from="2026-07-01", company="distriservice"))
+show("yooz_live_summary(mois)", srv.yooz_live_summary(
+    group_by="mois", third_code="FGLS", company="distriservice"))
+show("yooz_live_summary(factures seules)", srv.yooz_live_summary(
+    group_by="aucun", doc_kind="facture", company="distriservice"))
+
+print()
+POSTS.clear()
+direct = srv.yooz_live_summary(group_by="aucun", third_code="FGLS", company="distriservice")
+# 1200 (facture) - 120 (avoir) + 10 (autre document) = 1090
+expect("avoir compte en negatif (vu 1090 attendu)", '"ttc": 1090.0' in direct)
+expect("avoir isole dans ttc_avoirs", '"ttc_avoirs": -120.0' in direct)
+expect("tva de l'avoir aussi en negatif (200 - 20 = 180)", '"tva": 180.0' in direct)
+
+facture_seule = srv.yooz_live_summary(
+    group_by="aucun", doc_kind="facture", company="distriservice")
+expect("doc_kind=facture ecarte l'avoir (1200 + 10)", '"ttc": 1210.0' in facture_seule)
+expect("doc_kind=avoir ne garde que l'avoir",
+       '"ttc": -120.0' in srv.yooz_live_summary(
+           group_by="aucun", doc_kind="avoir", company="distriservice"))
+expect("doc_kind inconnu refuse",
+       srv.yooz_live_summary(doc_kind="nawak").startswith("ECHEC"))
+
+for bad_op in ("like", "contains", "startsWith"):
+    expect(f"operateur ignore en silence refuse : {bad_op:<12}", srv.yooz_live_invoices(
+        filters_json='[{"property": "thirdPartyName", "operator": "%s", "values": []}]' % bad_op
+    ).startswith("ECHEC"))
+expect("operateur inconnu refuse", srv.yooz_live_invoices(
+    filters_json='[{"property": "x", "operator": "nawak", "values": []}]').startswith("ECHEC"))
+expect("filters_json non JSON refuse",
+       srv.yooz_live_invoices(filters_json="{pas du json").startswith("ECHEC"))
+expect("filters_json sans property refuse",
+       srv.yooz_live_invoices(filters_json='[{"operator": "eq"}]').startswith("ECHEC"))
+expect("blocked hors oui/non refuse",
+       srv.yooz_live_invoices(blocked="peut-etre").startswith("ECHEC"))
+expect("date non ISO refusee",
+       srv.yooz_live_invoices(date_from="01/07/2026").startswith("ECHEC"))
+expect(f"max_rows plafonne a {srv.GRID_MAX_ROWS}",
+       srv.yooz_live_summary(max_rows=srv.GRID_MAX_ROWS + 1).startswith("ECHEC"))
+expect("grid_id non entier refuse",
+       srv.yooz_live_invoices(grid_id="../admin").startswith("ECHEC"))
+
+POSTS.clear()
+srv.yooz_live_invoices(third_code="FGLS,FVIR", date_from="2026-01-01", date_to="2026-12-31",
+                       blocked="oui", company="distriservice")
+sent = POSTS[0][2]
+expect("pageOffset part a 1", sent["pageOffset"] == 1)
+expect("plusieurs codes tiers -> operateur 'in'",
+       any(f.get("operator") == "in" and f.get("values") == ["FGLS", "FVIR"]
+           for f in sent["filters"]))
+expect("blocked=oui envoie YZ_BLOCKING.YZ_BLOCKED eq true",
+       any(f.get("property") == "YZ_BLOCKING.YZ_BLOCKED"
+           and f.get("values") == [{"value": True}] for f in sent["filters"]))
+expect("aucune colonne calculee demandee a Yooz",
+       not (set(sent["columns"]) & set(srv.GRID_LOCAL_COLUMNS)))
+expect("colonnes techniques toujours demandees",
+       set(srv.GRID_REQUIRED_COLUMNS) <= set(sent["columns"]))
+
+POSTS.clear()
+srv.yooz_live_invoices(company="distriservice", columns="yoozNumber,totalAmount")
+expect("colonnes explicites respectees",
+       "yoozNumber" in POSTS[0][2]["columns"] and "currency" not in POSTS[0][2]["columns"])
+
+expect("blocked=non filtre cote client (l'autre document est bloque)",
+       "44003" not in srv.yooz_live_invoices(blocked="non", company="distriservice"))
+expect("third_name filtre cote client et le dit",
+       "cote client" in srv.yooz_live_invoices(third_name="GLS", company="distriservice"))
+expect("societe sans document -> 0 ligne, pas une erreur",
+       "(0 ligne)" in srv.yooz_live_invoices(company="vente_unique"))
 
 # --- verifications de fond ------------------------------------------------
 print()

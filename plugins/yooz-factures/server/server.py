@@ -140,6 +140,95 @@ SUMMARY_COLUMNS = [
 ]
 
 
+# --------------------------------------------------------------------------
+# Grille de recherche du portail : le chemin direct, sans cache
+# --------------------------------------------------------------------------
+# L'API publique v2 n'a pas de recherche de documents. L'interface Yooz, elle,
+# en a une : sa grille de recherche poste ses filtres sur
+# /yooz/v1/core/grid/{id}/data. Ce n'est pas l'API v2 publique, c'est l'API
+# interne du portail - relevee le 2026-08-28 dans les appels du navigateur,
+# puis rejouee avec le jeton du connecteur (client API, et non le client
+# 'yooz-stats' du navigateur) : acceptee sur les deux societes, et l'en-tete
+# 'siloid' du navigateur ne sert a rien.
+#
+# Ce chemin rend le meme chiffre que le cache, en direct et sans synchro.
+# Controle du 2026-08-28 : 3 303 documents DistriService de 2026 joints sur
+# yoozNumber - montants identiques en valeur absolue, regle de signe en
+# desaccord sur 0, et deux dates de facture qui avaient bouge dans Yooz depuis
+# la derniere synchro (c'est precisement l'interet du direct).
+#
+# Deux differences de perimetre a garder en tete :
+#   - la grille porte TOUS les documents, pas seulement les factures ('Autre
+#     document', 'Devis - Proforma'...), la ou le data report ne rend que les
+#     factures. D'ou le parametre doc_kind, applique cote client ;
+#   - le data report a un plancher d'historique, la grille non.
+GRID_DATA_PATH = "/yooz/v1/core/grid/{grid_id}/data"
+GRID_SETTINGS_PATH = "/yooz/v1/core/grid/{grid_id}/settings"
+# -18 est la grille "documents" du portail, celle de la recherche.
+DEFAULT_GRID_ID = "-18"
+# pageOffset est un NUMERO DE PAGE, et il commence a 1 : 0 rend un HTTP 400.
+GRID_FIRST_PAGE = 1
+# Pas de plafond cote Yooz (100 000 accepte), mais une page de 5 000 tient en
+# memoire et evite un appel qui traine.
+GRID_PAGE_SIZE = 5000
+# Garde-fou de volume : au-dela, la question releve d'un export, pas d'une
+# reponse en session.
+GRID_MAX_ROWS = 20000
+GRID_TIMEZONE = "Europe/Paris"
+
+# Operateurs verifies un a un le 2026-08-28, en controlant que les lignes
+# rendues respectent effectivement le filtre demande.
+GRID_OPERATORS = ("eq", "neq", "in", "gte", "lte", "gt", "lt", "contextual")
+# LE piege de cette API : un operateur qu'elle ne sait pas appliquer n'est pas
+# refuse, il est IGNORE EN SILENCE. Un 'like' sur thirdPartyName rend la grille
+# entiere avec un HTTP 200 - donc un total faux, sans le moindre signal. On les
+# refuse ici plutot que de laisser sortir un chiffre errone.
+GRID_OPERATORS_IGNORED = (
+    "like", "nlike", "notlike", "contains", "notcontains", "ct", "nct",
+    "startswith", "endswith", "sw", "ew", "match", "search", "fulltext",
+)
+
+# Dans la grille, un avoir porte un montant POSITIF : le sens est dans le type
+# de document, pas dans le signe. Le data report, lui, le rend negatif. Sans
+# cette conversion, un cumul sur-compte chaque avoir du double de son montant.
+GRID_CREDIT_RE = re.compile(
+    r"\bavoir\b|credit\s*note|gutschrift|nota\s*di\s*credito", re.I
+)
+
+# Colonne synthetique ajoutee par le connecteur : elle ne se demande pas a Yooz.
+GRID_LOCAL_COLUMNS = ("source_app", "amountSigned", "totalAmountSigned")
+
+# Colonnes rendues par defaut, dans l'ordre metier. La grille en propose 97 :
+# yooz_live_columns les liste.
+GRID_DEFAULT_COLUMNS = (
+    "yoozNumber",
+    "documentNumber",
+    "documentDate",
+    "dueDate",
+    "thirdPartyName",
+    "orgUnitName",
+    "documentTypeName",
+    "amount",
+    "YZ_TAX_AMOUNT_YZ_COMMONS",
+    "totalAmount",
+    "currency",
+    "blockedBoolean",
+    "blockingCause",
+    "portalStatus",
+)
+# Colonnes dont le code a besoin quoi qu'il arrive : le signe vient du type de
+# document, et les filtres appliques cote client portent sur ces colonnes.
+GRID_REQUIRED_COLUMNS = (
+    "documentTypeName",
+    "totalAmount",
+    "amount",
+    "blockedBoolean",
+    "orgUnitName",
+    "thirdPartyName",
+    "documentDate",
+)
+
+
 class ConfigError(RuntimeError):
     pass
 
@@ -942,6 +1031,69 @@ def _api_get_bytes(company: Company, path: str, params: dict[str, Any] | None = 
             f"{(resp.text or '')[:800]}"
         )
     return resp.content
+
+
+def _api_post(company: Company, path: str, body: Any) -> Any:
+    """POST sur l'API du portail. Lecture seule : aucune ecriture exposee ici.
+
+    Yooz rend un 404 NO_DATA_FOUND quand le filtre ne ramene rien. Ce n'est pas
+    une erreur, c'est un resultat vide : on le traduit en liste vide, sinon
+    toute question sans reponse remonterait comme une panne.
+    """
+    url = path if path.startswith("http") else f"{_base_url()}{path}"
+
+    def call() -> httpx.Response:
+        return httpx.post(
+            url,
+            json=body,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_get_token(company)}",
+                "applicationId": company.application_id,
+            },
+            timeout=API_TIMEOUT_S,
+        )
+
+    resp = call()
+    if resp.status_code == 401:
+        _get_token(company, force=True)
+        resp = call()
+
+    text = resp.text or ""
+    if resp.status_code == 404 and "NO_DATA_FOUND" in text:
+        return []
+
+    if resp.status_code >= 400:
+        if "EMPTY_OR_BAD_APPLICATION_ID" in text:
+            raise YoozError(
+                f"Yooz refuse l'applicationId de {company.label} (403 "
+                f"EMPTY_OR_BAD_APPLICATION_ID). L'en-tete applicationId est celui "
+                f"de l'application Yooz, et il differe du client_id."
+            )
+        detail = text[:1200]
+        try:
+            payload = resp.json()
+            msg = payload.get("validationMessages") or payload.get("message")
+            if msg:
+                detail = json.dumps(msg, ensure_ascii=False)[:900]
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        if "NOT_RIGHT_ROLE_ON_COMPONENT" in text:
+            detail += (
+                f"\nCette grille n'est pas ouverte a ce compte. La grille des "
+                f"documents est {DEFAULT_GRID_ID}."
+            )
+        raise YoozError(
+            f"HTTP {resp.status_code} sur POST {url} ({company.label})\n{detail}"
+        )
+
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except json.JSONDecodeError:
+        return {"_raw": text[:2000]}
 
 
 def _rows_of(payload: Any) -> list[dict]:
@@ -2171,6 +2323,603 @@ def yooz_api_get(path: str, company: str = "", query: str = "") -> str:
             text = text[:12000] + "\n[... tronque]"
         return f"=== {comp.label} GET {path} ===\n{text}"
     except (ConfigError, AuthError, YoozError, json.JSONDecodeError) as exc:
+        return _fail(exc)
+
+
+# --------------------------------------------------------------------------
+# Grille de recherche : construction des filtres
+# --------------------------------------------------------------------------
+
+def _grid_id_of(grid_id: str = "") -> str:
+    value = _clean(grid_id) or DEFAULT_GRID_ID
+    if not re.fullmatch(r"-?\d+", value):
+        raise YoozError(
+            f"grid_id doit etre un entier (defaut {DEFAULT_GRID_ID}), recu '{grid_id}'."
+        )
+    return value
+
+
+def _grid_check_operator(op: str, where: str) -> str:
+    key = (op or "").strip()
+    if key.lower() in GRID_OPERATORS_IGNORED:
+        raise YoozError(
+            f"L'operateur '{key}' ({where}) n'est PAS applique par la grille "
+            f"Yooz : elle repond HTTP 200 en ignorant le filtre, donc elle rend "
+            f"tout, et le total serait faux sans qu'aucune erreur ne le signale. "
+            f"Pour chercher un tiers par son nom, recupere son code avec "
+            f"yooz_referential (famille fournisseur) puis passe-le dans "
+            f"third_code. Operateurs reellement appliques : "
+            f"{', '.join(GRID_OPERATORS)}."
+        )
+    if key not in GRID_OPERATORS:
+        raise YoozError(
+            f"Operateur inconnu '{key}' ({where}). Choix : {', '.join(GRID_OPERATORS)}."
+        )
+    return key
+
+
+def _f_third(codes: list[str]) -> dict:
+    """Filtre tiers par code du referentiel - le seul filtre tiers applique."""
+    return {
+        "dataBlockCode": "YZ_COMMONS",
+        "dataItemCode": "YZ_THIRD",
+        "dimensionId": None,
+        "operator": "eq" if len(codes) == 1 else "in",
+        "property": "YZ_COMMONS.YZ_THIRD.YZ_REFERENTIAL_DATA_COMMONS.YZ_CODE",
+        "values": codes,
+    }
+
+
+def _f_date(item: str, op: str, value: str) -> dict:
+    return {
+        "dataBlockCode": "YZ_COMMONS",
+        "dataItemCode": item,
+        "dimensionId": None,
+        "operator": op,
+        "options": {"timeZone": GRID_TIMEZONE},
+        "property": f"YZ_COMMONS.{item}",
+        "values": [{"value": value}],
+    }
+
+
+def _f_amount(op: str, value: float) -> dict:
+    return {
+        "dataBlockCode": "YZ_COMMONS",
+        "dataItemCode": "YZ_TOTAL_AMOUNT",
+        "dimensionId": None,
+        "operator": op,
+        "property": "YZ_COMMONS.YZ_TOTAL_AMOUNT",
+        "values": [{"value": float(value)}],
+    }
+
+
+def _f_number(value: str) -> dict:
+    """Numero de piece, en egalite stricte.
+
+    Le 'like' sur ce champ est ignore par la grille : la recherche partielle de
+    numero n'existe pas ici, il faut le numero exact.
+    """
+    return {
+        "dataBlockCode": "YZ_COMMONS",
+        "dataItemCode": "YZ_NUMBER",
+        "dimensionId": None,
+        "operator": "eq",
+        "property": "YZ_COMMONS.YZ_NUMBER",
+        "values": [{"value": value}],
+    }
+
+
+def _f_blocked() -> dict:
+    """Documents bloques.
+
+    Seul 'eq true' est fiable. Le 'eq false' que poste le navigateur ne veut
+    PAS dire "non bloque" : sur les 145 documents GLS, tous non bloques, il n'en
+    rend que 8. Il selectionne les documents qui portent un bloc de blocage, pas
+    ceux qui ne sont pas bloques. D'ou blocked='non' applique cote client, sur
+    la colonne blockedBoolean.
+    """
+    return {
+        "dataBlockCode": "YZ_BLOCKING",
+        "dataItemCode": "YZ_BLOCKED",
+        "dimensionId": None,
+        "operator": "eq",
+        "property": "YZ_BLOCKING.YZ_BLOCKED",
+        "values": [{"value": True}],
+    }
+
+
+def _grid_parse_filters(filters_json: str) -> list[dict]:
+    """Filtres bruts fournis par l'appelant, verifies avant envoi."""
+    raw = _clean(filters_json)
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise YoozError(f"filters_json n'est pas du JSON valide : {exc}") from exc
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        raise YoozError("filters_json doit etre un objet ou une liste d'objets.")
+    out: list[dict] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            raise YoozError("Chaque filtre de filters_json doit etre un objet JSON.")
+        if "property" not in item or "operator" not in item:
+            raise YoozError(
+                "Un filtre porte au moins 'property' et 'operator'. Exemple : "
+                + json.dumps(
+                    {
+                        "dataBlockCode": "YZ_COMMONS",
+                        "dataItemCode": "YZ_DATE",
+                        "operator": "gte",
+                        "property": "YZ_COMMONS.YZ_DATE",
+                        "values": [{"value": "2026-01-01"}],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        _grid_check_operator(str(item["operator"]), f"filters_json / {item['property']}")
+        out.append(item)
+    return out
+
+
+def _grid_build_filters(
+    third_code: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    due_from: str = "",
+    due_to: str = "",
+    amount_min: float = 0,
+    amount_max: float = 0,
+    number: str = "",
+    blocked: str = "",
+    filters_json: str = "",
+) -> list[dict]:
+    filters: list[dict] = []
+
+    codes = [c.strip() for c in _split_list(third_code) if c.strip()]
+    if codes:
+        filters.append(_f_third(codes))
+    if date_from:
+        filters.append(_f_date("YZ_DATE", "gte", _iso_date(date_from, "date_from")))
+    if date_to:
+        filters.append(_f_date("YZ_DATE", "lte", _iso_date(date_to, "date_to")))
+    if due_from:
+        filters.append(_f_date("YZ_DUE_DATE", "gte", _iso_date(due_from, "due_from")))
+    if due_to:
+        filters.append(_f_date("YZ_DUE_DATE", "lte", _iso_date(due_to, "due_to")))
+    if amount_min:
+        filters.append(_f_amount("gte", amount_min))
+    if amount_max:
+        filters.append(_f_amount("lte", amount_max))
+    if _clean(number):
+        filters.append(_f_number(_clean(number)))
+
+    flag = (blocked or "").strip().lower()
+    if flag in ("oui", "yes", "true", "1"):
+        filters.append(_f_blocked())
+    elif flag and flag not in ("non", "no", "false", "0"):
+        raise YoozError("blocked attend 'oui' ou 'non' (vide = les deux).")
+
+    filters.extend(_grid_parse_filters(filters_json))
+    return filters
+
+
+# --------------------------------------------------------------------------
+# Grille de recherche : appel, signe, filtres cote client
+# --------------------------------------------------------------------------
+
+def _split_list(value: str) -> list[str]:
+    """Decoupe une saisie 'a,b ; c' en liste, virgule ou point-virgule."""
+    return [part.strip() for part in re.split(r"[,;]", value or "") if part.strip()]
+
+
+def _grid_columns_wanted(columns: str) -> list[str]:
+    """Colonnes a demander a Yooz : celles voulues, plus celles dont on a besoin.
+
+    Les colonnes calculees par le connecteur sont retirees : les demander a Yooz
+    ferait echouer la validation du composant.
+    """
+    asked = _split_list(columns)
+    base = asked or list(GRID_DEFAULT_COLUMNS)
+    merged = list(dict.fromkeys(list(base) + list(GRID_REQUIRED_COLUMNS)))
+    return [c for c in merged if c not in GRID_LOCAL_COLUMNS]
+
+
+def _grid_is_credit(row: dict) -> bool:
+    return bool(GRID_CREDIT_RE.search(str(row.get("documentTypeName") or "")))
+
+
+def _grid_apply_sign(rows: list[dict]) -> list[dict]:
+    """Repasse le signe des avoirs, que la grille rend en positif."""
+    for row in rows:
+        sign = -1 if _grid_is_credit(row) else 1
+        for src, dest in (("amount", "amountSigned"), ("totalAmount", "totalAmountSigned")):
+            value = _to_number(row.get(src))
+            row[dest] = round(sign * value, 2) if isinstance(value, (int, float)) else None
+    return rows
+
+
+def _grid_fetch(
+    company: Company,
+    filters: list[dict],
+    columns: list[str],
+    grid_id: str,
+    max_rows: int,
+) -> tuple[list[dict], bool]:
+    """Pagine la grille. Rend (lignes, tronque)."""
+    per_page = max(1, min(GRID_PAGE_SIZE, int(max_rows)))
+    rows: list[dict] = []
+    truncated = False
+    page = GRID_FIRST_PAGE
+    while True:
+        payload = _api_post(
+            company,
+            GRID_DATA_PATH.format(grid_id=grid_id),
+            {
+                "filters": filters,
+                "columns": columns,
+                "pageOffset": page,
+                "pageSize": per_page,
+            },
+        )
+        batch = payload if isinstance(payload, list) else _rows_of(payload)
+        if not batch:
+            break
+        for row in batch:
+            row["source_app"] = company.label
+        rows.extend(batch)
+        if len(batch) < per_page:
+            break
+        if len(rows) >= int(max_rows):
+            truncated = True
+            break
+        page += 1
+    return _grid_apply_sign(rows[: int(max_rows)]), truncated
+
+
+def _grid_post_filter(
+    rows: list[dict],
+    doc_kind: str = "",
+    org_unit: str = "",
+    third_name: str = "",
+    blocked: str = "",
+) -> tuple[list[dict], list[str]]:
+    """Filtres que la grille n'applique pas : ils portent sur les lignes rendues.
+
+    Consequence a assumer : ils jouent APRES le plafond de lignes. Si le plafond
+    est atteint, le resultat est un sous-ensemble, pas un compte.
+    """
+    notes: list[str] = []
+    out = rows
+
+    kind = (doc_kind or "").strip().lower()
+    if kind in ("facture", "factures"):
+        out = [r for r in out if not _grid_is_credit(r)]
+        notes.append("doc_kind=facture : avoirs ecartes (cote client)")
+    elif kind in ("avoir", "avoirs"):
+        out = [r for r in out if _grid_is_credit(r)]
+        notes.append("doc_kind=avoir : factures ecartees (cote client)")
+    elif kind and kind not in ("tous", "toutes", "all"):
+        raise YoozError("doc_kind attend 'facture', 'avoir' ou 'tous'.")
+
+    if _clean(org_unit):
+        needle = _clean(org_unit).lower()
+        out = [r for r in out if needle in str(r.get("orgUnitName") or "").lower()]
+        notes.append(f"org_unit='{_clean(org_unit)}' (cote client, sur orgUnitName)")
+
+    if _clean(third_name):
+        needle = _clean(third_name).lower()
+        out = [r for r in out if needle in str(r.get("thirdPartyName") or "").lower()]
+        notes.append(
+            f"third_name='{_clean(third_name)}' (cote client : la grille ignore "
+            f"toute recherche partielle de nom. Pour un filtre serveur, passe par "
+            f"yooz_referential puis third_code)"
+        )
+
+    if (blocked or "").strip().lower() in ("non", "no", "false", "0"):
+        out = [r for r in out if r.get("blockedBoolean") is not True]
+        notes.append(
+            "blocked=non (cote client : le filtre serveur 'eq false' ne veut pas "
+            "dire non bloque)"
+        )
+
+    return out, notes
+
+
+def _grid_run(
+    company: str,
+    filters: list[dict],
+    columns: list[str],
+    grid_id: str,
+    max_rows: int,
+    doc_kind: str = "",
+    org_unit: str = "",
+    third_name: str = "",
+    blocked: str = "",
+) -> tuple[list[dict], list[str]]:
+    """Interroge chaque societe demandee et concatene les lignes."""
+    if int(max_rows) > GRID_MAX_ROWS:
+        raise YoozError(
+            f"max_rows est plafonne a {GRID_MAX_ROWS} lignes sur ce chemin direct. "
+            f"Au-dela, passe par le cache : yooz_sync puis yooz_export_csv."
+        )
+    rows: list[dict] = []
+    notes: list[str] = []
+    for comp in _resolve_companies(company):
+        got, truncated = _grid_fetch(comp, filters, columns, grid_id, int(max_rows))
+        rows.extend(got)
+        if truncated:
+            notes.append(
+                f"ATTENTION {comp.label} : plafond de {int(max_rows)} lignes "
+                f"atteint, le resultat est INCOMPLET. Resserre la periode ou le "
+                f"tiers avant de citer un total."
+            )
+    filtered, post_notes = _grid_post_filter(rows, doc_kind, org_unit, third_name, blocked)
+    if notes and post_notes:
+        post_notes.append(
+            "Les filtres cote client jouent apres le plafond : sur un resultat "
+            "tronque, ils ne donnent pas un compte."
+        )
+    return filtered, notes + post_notes
+
+
+def _grid_header(rows: list[dict], notes: list[str], filters: list[dict]) -> str:
+    stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"Yooz EN DIRECT (grille de recherche du portail), lu le {stamp}. Pas de "
+        f"cache : ces lignes sont l'etat courant de Yooz.",
+        f"{len(rows)} ligne(s) apres filtres, {len(filters)} filtre(s) serveur envoye(s).",
+    ]
+    lines.extend(f"  - {n}" for n in notes)
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Grille de recherche : les outils
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+def yooz_live_columns(company: str = "", grid_id: str = "", filterable: bool = False) -> str:
+    """Colonnes disponibles sur la grille de recherche Yooz, en direct.
+
+    A lire avant de renseigner 'columns' : la grille en propose 97, designees
+    par un code de colonne (totalAmount, documentDate, thirdPartyName...) qui
+    n'est pas celui du cache.
+
+    filterable  n'affiche que les colonnes que Yooz marque comme filtrables.
+                Cette marque ne garantit pas que le filtre soit reellement
+                applique : seuls les filtres exposes par yooz_live_invoices ont
+                ete verifies ligne a ligne.
+    """
+    try:
+        comp = _one_company(company)
+        gid = _grid_id_of(grid_id)
+        payload = _api_post(comp, GRID_SETTINGS_PATH.format(grid_id=gid), {})
+        cols = (payload or {}).get("columns") or []
+        rows = []
+        for col in cols:
+            if filterable and col.get("gridFilterAvailable") is False:
+                continue
+            rows.append(
+                {
+                    "code": col.get("code"),
+                    "type": col.get("type"),
+                    "libelle": col.get("label"),
+                    "dataBlockCode": col.get("dataBlockCode") or "",
+                    "dataItemCode": col.get("dataItemCode") or "",
+                    "triable": col.get("sortable"),
+                }
+            )
+        head = (
+            f"=== Grille {gid}, {comp.label} : {len(rows)} colonne(s) ===\n"
+            f"La colonne 'code' donne les valeurs a passer dans 'columns'.\n"
+        )
+        return head + _to_csv(rows, max_rows=len(rows) or 1)
+    except (ConfigError, AuthError, YoozError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def yooz_live_invoices(
+    third_code: str = "",
+    third_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    due_from: str = "",
+    due_to: str = "",
+    amount_min: float = 0,
+    amount_max: float = 0,
+    number: str = "",
+    blocked: str = "",
+    doc_kind: str = "",
+    org_unit: str = "",
+    company: str = "",
+    columns: str = "",
+    filters_json: str = "",
+    grid_id: str = "",
+    max_rows: int = 200,
+) -> str:
+    """Recherche de documents dans Yooz EN DIRECT, sans passer par le cache.
+
+    C'est le chemin rapide : la question se repond en un appel, sur l'etat
+    courant de Yooz, sans yooz_sync. A preferer des qu'elle tient en quelques
+    centaines de lignes et n'a pas besoin d'un fichier. Le cache reste le chemin
+    de l'historique large et du SQL libre.
+
+    third_code   code du tiers au referentiel ('FGLS'), plusieurs separes par une
+                 virgule. C'est le SEUL filtre tiers que Yooz applique ici :
+                 recupere le code avec yooz_referential (famille fournisseur).
+    third_name   filtre de secours sur le libelle, applique cote client sur les
+                 lignes rendues. A combiner toujours avec une periode.
+    date_from / date_to  date de facture (AAAA-MM-JJ), bornes incluses.
+    due_from / due_to    date d'echeance.
+    number       numero de piece, EGALITE STRICTE (le partiel n'existe pas ici).
+    blocked      'oui' (filtre serveur) ou 'non' (filtre cote client).
+    doc_kind     'facture', 'avoir' ou 'tous' (defaut). Applique cote client : la
+                 grille porte aussi des devis et des 'Autre document'.
+    columns      codes de colonnes separes par une virgule, cf. yooz_live_columns.
+    filters_json filtres bruts, pour ce que les parametres ne couvrent pas.
+
+    Deux colonnes calculees sont ajoutees : amountSigned et totalAmountSigned.
+    La grille rend les avoirs en POSITIF - ce sont ces colonnes signees, et elles
+    seules, qu'il faut additionner.
+    """
+    try:
+        filters = _grid_build_filters(
+            third_code=third_code,
+            date_from=date_from,
+            date_to=date_to,
+            due_from=due_from,
+            due_to=due_to,
+            amount_min=amount_min,
+            amount_max=amount_max,
+            number=number,
+            blocked=blocked,
+            filters_json=filters_json,
+        )
+        wanted = _grid_columns_wanted(columns)
+        rows, notes = _grid_run(
+            company=company,
+            filters=filters,
+            columns=wanted,
+            grid_id=_grid_id_of(grid_id),
+            max_rows=max(int(max_rows), 1),
+            doc_kind=doc_kind,
+            org_unit=org_unit,
+            third_name=third_name,
+            blocked=blocked,
+        )
+        shown = ["source_app"] + wanted + ["amountSigned", "totalAmountSigned"]
+        body = _to_csv(rows, max_rows=int(max_rows), columns=shown)
+        return _grid_header(rows, notes, filters) + "\n\n" + body
+    except (ConfigError, AuthError, YoozError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def yooz_live_summary(
+    group_by: str = "mois",
+    third_code: str = "",
+    third_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    due_from: str = "",
+    due_to: str = "",
+    amount_min: float = 0,
+    amount_max: float = 0,
+    blocked: str = "",
+    doc_kind: str = "",
+    org_unit: str = "",
+    company: str = "",
+    filters_json: str = "",
+    grid_id: str = "",
+    max_rows: int = 20000,
+) -> str:
+    """Montants et volumes agreges, EN DIRECT, sans cache.
+
+    C'est la reponse en un appel a "combien ce fournisseur nous a-t-il facture
+    sur la periode". Les avoirs sont comptes en negatif - la grille les rend en
+    positif - et leur part est isolee pour que le chiffre soit citable.
+
+    group_by  'mois' (defaut), 'aucun' pour un total unique, ou un code de
+              colonne de la grille : thirdPartyName, orgUnitName,
+              documentTypeName, portalStatus, currency, source_app...
+    """
+    try:
+        filters = _grid_build_filters(
+            third_code=third_code,
+            date_from=date_from,
+            date_to=date_to,
+            due_from=due_from,
+            due_to=due_to,
+            amount_min=amount_min,
+            amount_max=amount_max,
+            blocked=blocked,
+            filters_json=filters_json,
+        )
+        key = (group_by or "").strip() or "mois"
+        by_month = key.lower() in ("mois", "month")
+        single = key.lower() in ("aucun", "none", "total")
+        label = "mois" if by_month else ("perimetre" if single else key)
+
+        extra = [] if (by_month or single or key in GRID_LOCAL_COLUMNS) else [key]
+        wanted = _grid_columns_wanted(",".join(list(GRID_DEFAULT_COLUMNS) + extra))
+        rows, notes = _grid_run(
+            company=company,
+            filters=filters,
+            columns=wanted,
+            grid_id=_grid_id_of(grid_id),
+            max_rows=max(int(max_rows), 1),
+            doc_kind=doc_kind,
+            org_unit=org_unit,
+            third_name=third_name,
+            blocked=blocked,
+        )
+
+        def bucket(row: dict) -> str:
+            if by_month:
+                return str(row.get("documentDate") or "")[:7] or "(sans date)"
+            if single:
+                return "total"
+            return str(row.get(key, "")) or "(vide)"
+
+        agg: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            slot_key = bucket(row)
+            slot = agg.setdefault(
+                slot_key,
+                {
+                    label: slot_key,
+                    "nb": 0,
+                    "ht": 0.0,
+                    "tva": 0.0,
+                    "ttc": 0.0,
+                    "nb_avoirs": 0,
+                    "ttc_avoirs": 0.0,
+                },
+            )
+            credit = _grid_is_credit(row)
+            slot["nb"] += 1
+            slot["ht"] += _to_number(row.get("amountSigned")) or 0
+            slot["ttc"] += _to_number(row.get("totalAmountSigned")) or 0
+            tax = _to_number(row.get("YZ_TAX_AMOUNT_YZ_COMMONS")) or 0
+            slot["tva"] += -tax if credit else tax
+            if credit:
+                slot["nb_avoirs"] += 1
+                slot["ttc_avoirs"] += _to_number(row.get("totalAmountSigned")) or 0
+
+        out = list(agg.values())
+        for slot in out:
+            for money in ("ht", "tva", "ttc", "ttc_avoirs"):
+                slot[money] = round(slot[money], 2)
+        if by_month:
+            out.sort(key=lambda s: str(s[label]))
+        else:
+            out.sort(key=lambda s: -abs(s["ttc"]))
+
+        total = {
+            "nb": sum(s["nb"] for s in out),
+            "ht": round(sum(s["ht"] for s in out), 2),
+            "tva": round(sum(s["tva"] for s in out), 2),
+            "ttc": round(sum(s["ttc"] for s in out), 2),
+            "nb_avoirs": sum(s["nb_avoirs"] for s in out),
+            "ttc_avoirs": round(sum(s["ttc_avoirs"] for s in out), 2),
+        }
+        head = _grid_header(rows, notes, filters)
+        head += (
+            "\nAvoirs comptes en negatif. 'ht' et 'ttc' viennent des colonnes "
+            "signees ; 'nb_avoirs' et 'ttc_avoirs' isolent leur part."
+        )
+        return (
+            head
+            + "\n\n"
+            + _to_csv(out, max_rows=len(out) or 1)
+            + "\n\nTOTAL : "
+            + json.dumps(total, ensure_ascii=False)
+        )
+    except (ConfigError, AuthError, YoozError) as exc:
         return _fail(exc)
 
 

@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "yooz-factures",
   "displayName": "Yooz - factures fournisseurs (lecture seule)",
-  "version": "1.1.0",
-  "description": "Interroge la base de factures Yooz des societes du groupe en lecture seule : historique rapatrie dans un cache local et interrogeable en SQL, plus les requetes directes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). 17 outils.",
+  "version": "1.2.0",
+  "description": "Interroge la base de factures Yooz des societes du groupe en lecture seule : recherche filtree en direct sur la grille du portail (tiers, periode, echeance, montant, blocage), historique rapatrie dans un cache local et interrogeable en SQL, et les requetes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). 20 outils.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
   },
