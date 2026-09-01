@@ -9,8 +9,8 @@
     {
       "name": "shiptify",
       "source": "./plugins/shiptify",
-      "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine, sur demande explicite.",
-      "version": "1.4.0",
+      "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Agregation cote serveur (compter, sommer, repartir) pour repondre en un appel, lexique metier qui traduit les noms maison en filtres justes, cache local SQLite interrogeable en SQL pour l'historique. Export CSV sur demande explicite. 28 outils.",
+      "version": "1.5.0",
       "category": "connecteur",
       "tags": [
         "shiptify",
@@ -22,8 +22,8 @@
     {
       "name": "yooz-factures",
       "source": "./plugins/yooz-factures",
-      "description": "Interroge la base de factures Yooz des societes du groupe en lecture seule : recherche filtree en direct sur la grille du portail (tiers, periode, echeance, montant, blocage), historique rapatrie dans un cache local et interrogeable en SQL, et les requetes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). 20 outils et une skill.",
-      "version": "1.2.0",
+      "description": "Interroge la base de factures Yooz des societes du groupe en lecture seule : recherche filtree en direct sur la grille du portail (tiers, periode, echeance, montant, blocage), historique rapatrie dans un cache local et interrogeable en SQL, et les requetes que l'API rend vite (rapports, fiche fournisseur, unites d'organisation, exports comptables). Resolution des noms maison en codes tiers EXACTS - un code approche rend zero document sans erreur. 22 outils.",
+      "version": "1.3.0",
       "category": "connecteur",
       "tags": [
         "yooz",
@@ -33,10 +33,25 @@
       ]
     },
     {
+      "name": "reflex-wms",
+      "source": "./plugins/reflex-wms",
+      "description": "Interroge le WMS Reflex en lecture seule, en langage naturel : preparations, receptions, expeditions, chargements, stock, mouvements, emplacements. Le MLD Hardis des 1 985 tables est embarque dans le connecteur, donc les questions de schema repondent hors ligne et une requete T-SQL juste s'ecrit sans decouverte sur la production. Garde-fous : gouverneur de cout, delai borne, WITH (NOLOCK) exige, une requete a la fois. 11 outils et une skill. Export CSV sur demande explicite. Par defaut une lecture interroge la base d'EPURATION puis la base COURANTE et dit laquelle a repondu. Outils annotes readOnlyHint conformement a la specification MCP.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "reflex",
+        "wms",
+        "entrepot",
+        "hardis",
+        "sql",
+        "stock"
+      ]
+    },
+    {
       "name": "peripass",
       "source": "./plugins/peripass",
-      "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs et creneaux de quai, arrivees, check-in et departs, temps d'attente et de rotation, assets sur la cour, taches, profils et tableaux de dispatch. 20 outils et une skill. Multi-tenant : une cle par site, et une colonne site sur chaque resultat.",
-      "version": "1.1.0",
+      "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs et creneaux de quai, arrivees, check-in et departs, temps d'attente et de rotation, assets sur la cour, taches, profils et tableaux de dispatch. Agregation cote serveur (moyenne, mediane, p90 des temps d'attente), lexique metier qui comprend « Moulins » et « creneau », cache local SQLite pour l'historique sans reconsommer le quota. Multi-tenant : une cle par site, et une colonne site sur chaque resultat. 27 outils.",
+      "version": "1.2.0",
       "category": "connecteur",
       "tags": [
         "peripass",
@@ -45,6 +60,21 @@
         "creneau",
         "quai",
         "transport"
+      ]
+    },
+    {
+      "name": "jira",
+      "source": "./plugins/jira",
+      "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique, en lecture seule : vuproject (metier - SUPPLY, VUD) et webfacto (developpement). Le contexte JIRA est embarque - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte, et le JQL genere est affiche pour etre verifiable. Agregation cote serveur pour compter (l'API Jira ne rend aucun total), cache local SQLite interrogeable en SQL, export CSV sur demande. Commandes /jira-projet, /jira-wf et leurs exports. 27 outils.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "jira",
+        "atlassian",
+        "supply",
+        "vud",
+        "webfacto",
+        "projets"
       ]
     }
   ]

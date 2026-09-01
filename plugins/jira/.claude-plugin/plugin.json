@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "jira",
+  "displayName": "JIRA - deux instances (lecture seule)",
+  "version": "1.0.0",
+  "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique, en lecture seule : vuproject (metier - SUPPLY, VUD) et webfacto (developpement). Le contexte JIRA est embarque dans le connecteur - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte. Traduction verifiable : le JQL genere est affiche. Agregation cote serveur pour compter, cache local SQLite interrogeable en SQL, export CSV sur demande. 27 outils.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "jira",
+    "atlassian",
+    "supply",
+    "vud",
+    "webfacto",
+    "projets",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "projet_email": {
+      "type": "string",
+      "title": "Courriel Atlassian - instance PROJET (vuproject)",
+      "description": "Commence par lancer /jira-setup : si l'equipe fournit deja les identifiants du compte de service dans 08_ENGINE/04_mcp/00_config/jira.shared.env, il n'y a RIEN a saisir ici. Ce champ sert alors a surcharger la valeur d'equipe sur ce poste - typiquement un acces nominatif, pour que JIRA trace ce qu'on fait sous son propre nom. Jira Cloud attend le COUPLE courriel + jeton : le jeton seul rend une erreur 401.",
+      "required": false
+    },
+    "projet_token": {
+      "type": "string",
+      "title": "Jeton d'API Atlassian - instance PROJET (vuproject)",
+      "description": "A ne renseigner que si /jira-setup dit qu'il manque quelque chose, ou pour surcharger le compte de service de l'equipe par un acces nominatif. Le jeton se cree sur https://id.atlassian.com/manage-profile/security/api-tokens (« Create API token ») ; Atlassian n'expose aucune API pour en creer un. Ce que tu tapes ici reste sur ton poste : ni versionne, ni ecrit dans le drive d'equipe, ni visible dans la conversation. Un jeton cree depuis ton compte est nominatif - JIRA tracera sous ton nom, et il tombera si tes droits changent.",
+      "required": false,
+      "sensitive": true
+    },
+    "wf_email": {
+      "type": "string",
+      "title": "Courriel Atlassian - instance WF (webfacto)",
+      "description": "Meme regle que pour PROJET : /jira-setup dit d'abord si l'equipe le fournit. C'est souvent le meme courriel que pour vuproject, mais ce n'est pas garanti - les deux instances ont des annuaires distincts.",
+      "required": false
+    },
+    "wf_token": {
+      "type": "string",
+      "title": "Jeton d'API Atlassian - instance WF (webfacto)",
+      "description": "Un jeton d'API pour webfacto. ATTENTION : ce n'est PAS le meme que celui de vuproject, meme si le compte est le meme - un jeton est lie a un compte, et le compte doit avoir ete invite sur chaque instance. Si le jeton de vuproject rend 401 sur webfacto, ce n'est pas une faute de saisie : il faut un acces a webfacto, et ca se demande a la WebFacto. Comme pour PROJET, /jira-setup dit d'abord si l'equipe le fournit.",
+      "required": false,
+      "sensitive": true
+    },
+    "tenants": {
+      "type": "string",
+      "title": "Instances a interroger (optionnel)",
+      "description": "Liste separee par des virgules. Par defaut PROJET,WF. A ne renseigner que pour n'interroger qu'une seule instance depuis ce poste - typiquement PROJET seul, si l'on n'a pas d'acces a webfacto.",
+      "required": false
+    },
+    "projet_base_url": {
+      "type": "string",
+      "title": "Racine du site PROJET (optionnel)",
+      "description": "Laisse vide : https://vuproject.atlassian.net est le defaut du serveur. A ne renseigner que pour pointer une instance de recette depuis ce poste.",
+      "required": false
+    },
+    "wf_base_url": {
+      "type": "string",
+      "title": "Racine du site WF (optionnel)",
+      "description": "Laisse vide : https://webfacto.atlassian.net est le defaut du serveur.",
+      "required": false
+    },
+    "shared_env": {
+      "type": "string",
+      "title": "Chemin du fichier de configuration d'equipe (optionnel)",
+      "description": "A ne renseigner que si /jira-setup affiche « Config d'equipe : aucune ». Le connecteur cherche tout seul 08_ENGINE/04_mcp/00_config/jira.shared.env sous ton profil ; il ne le trouve pas si la bibliotheque SharePoint « Transport BtoC » n'est pas synchronisee au meme endroit que chez les autres. Colle alors le chemin complet du fichier.",
+      "required": false
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.jira-mcp/exports. Ce reglage est LOCAL par nature : il ne peut pas venir du fichier d'equipe, un chemin valable ici n'existe pas sur les autres postes. N'y mets jamais un dossier de la bibliotheque partagee : un CSV depose dans un dossier synchronise part chez tout le monde.",
+      "required": false
+    }
+  }
+}

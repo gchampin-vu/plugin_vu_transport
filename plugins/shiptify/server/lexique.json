@@ -1,0 +1,408 @@
+{
+  "_lisez_moi": [
+    "Vocabulaire maison de l'equipe Logistique & Transport, livre AVEC le connecteur.",
+    "Il sert a une seule chose : qu'une question posee en francais courant ('les envois VIR",
+    "de juillet') se traduise en filtre juste, sans que le modele devine.",
+    "",
+    "Il ne contient AUCUN fait chiffre : ni volume, ni tarif, ni date de contrat. Un chiffre",
+    "vient de l'API, jamais d'ici.",
+    "",
+    "Il se met a jour a la main, depuis 01_CONTEXTE/ de la bibliotheque d'equipe, qui fait",
+    "foi. Le champ 'source' de chaque bloc dit d'ou vient l'information."
+  ],
+  "version": "1.1",
+  "updated": "2026-09-01",
+  "updated_by": "Guillaume_Champin",
+  "connecteur": "shiptify",
+  "ou_chercher_quoi": {
+    "_pourquoi": [
+      "LA confusion la plus couteuse sur ce connecteur, et elle donne une reponse vide qui a",
+      "l'air d'une reponse. Shiptify porte le MIDDLE MILE : l'acheminement de l'entrepot vers",
+      "les agences. Son referentiel de transporteurs (/carriers/active) est donc le panel",
+      "d'affretement, pas le portefeuille de livraison finale.",
+      "",
+      "Un transporteur du dernier kilometre n'y est pas comme transporteur : il y est comme",
+      "DESTINATION, cote address_dest. Chercher 'VIR' dans carrier.name rend zero ligne, et",
+      "zero ligne se lit comme 'il n'y en a pas'. C'est faux."
+    ],
+    "carrier.name": "Le transporteur qui ROULE la ligne middle mile : affretement, traction, navette. Releve le 2026-08-28 : 119 transporteurs actifs, nommes 'Nom I Ville', internal_ref jamais renseigne.",
+    "address_dest.name": "La destination : agence VU Delivery, hub, plateforme du prestataire dernier kilometre. C'est ici que vivent VIR / JP Home.",
+    "address_from.name": "L'origine : entrepot (Amblainville, Montbeugny) ou site expediteur.",
+    "shipment_mode.name": "Le mode de transport de la ligne."
+  },
+  "alias": {
+    "vir": {
+      "canonique": "VIR / JP Home (groupe Perrenot)",
+      "champ": "address_dest.name",
+      "motifs": [
+        "VIR",
+        "JP HOME",
+        "JPH"
+      ],
+      "note": "VIR est l'ancien nom de JP Home : un seul prestataire, deux libelles, et les DEUX coexistent dans Shiptify sur les memes agences. Un comptage filtre sur la seule chaine 'VIR' sous-compte. Formes relevees le 2026-08-27 : 'Vir Log I Emerainville', 'VIR Log I Chartres-de-Bretagne', 'VIR by JP Home | Caurel', 'Vir Transport by JP Emerainville', 'JP Home center HUB' (Mer, 41500), 'JP HOME NEGOCE' (Essarts-en-Bocage), 'JPH 55 Reverse/return Mer'.",
+      "source": "Confirme par Guillaume Champin le 2026-08-27, rattachement au groupe Perrenot precise le 2026-09-01.",
+      "groupe": "Perrenot"
+    },
+    "jp home": {
+      "memeque": "vir"
+    },
+    "jph": {
+      "memeque": "vir"
+    },
+    "jp": {
+      "memeque": "vir"
+    },
+    "perrenot": {
+      "canonique": "Groupe Perrenot (VIR / JP Home / TAMDIS)",
+      "champ": "address_dest.name",
+      "motifs": [
+        "VIR",
+        "JP HOME",
+        "JPH",
+        "TAMDIS"
+      ],
+      "note": "Groupe Perrenot (Jacky Perrenot). VIR, JP Home et TAMDIS en sont trois entites : un raisonnement 'par groupe' les additionne, un raisonnement 'par prestataire' ne le fait pas. Dire laquelle des deux lectures on tient. Attention : ces trois entites ne se trouvent PAS au meme endroit dans Shiptify - VIR et JP Home apparaissent comme destinations, TAMDIS releve du dernier kilometre et n'est pas dans le referentiel des transporteurs. Un total 'groupe Perrenot' se construit cote Yooz, pas ici.",
+      "source": "Precise par Guillaume Champin le 2026-09-01."
+    },
+    "distri service": {
+      "canonique": "Distri Service (ancienne societe de Vente-unique)",
+      "champ": "address_from.name",
+      "motifs": [
+        "DISTRI SERVICE",
+        "DISTRI-SERVICE"
+      ],
+      "note": "**Ancienne societe de Vente-unique**, et l'une des entites du groupe : c'est la societe 'DistriService' du connecteur Yooz, celle qui recoit des factures. AUCUN lien capitalistique avec le groupe Perrenot - seulement des contrats. Ne pas la confondre avec VIR : ce sont deux choses differentes, et l'annuaire d'equipe les a longtemps donnees pour un seul prestataire.",
+      "source": "Precise par Guillaume Champin le 2026-09-01. Corrige une lecture anterieure qui rattachait VIR a Distri Service."
+    },
+    "xpo": {
+      "canonique": "XPO",
+      "champ": "carrier.name",
+      "motifs": [
+        "XPO"
+      ],
+      "note": "QUATRE identifiants Shiptify pour un seul nom, releves le 2026-08-28 : 3509 (FR Villepinte), 1695 (ES Barcelona), 4319 (FR Lyon Mions), 7508 (ES Madrid). Un filtre sur un seul id sous-compte. XPO est aussi l'exploitant historique d'Amblainville jusqu'en 2020, sans rapport avec ces lignes."
+    },
+    "carreras": {
+      "canonique": "Carreras",
+      "champ": "carrier.name",
+      "motifs": [
+        "CARRERAS"
+      ],
+      "note": "Plusieurs entites relevees : FR Ingre, ES Zaragoza."
+    },
+    "sennder": {
+      "canonique": "Sennder",
+      "champ": "carrier.name",
+      "motifs": [
+        "SENNDER"
+      ],
+      "note": "Partenaire principal du middle mile. Le chercher dans une analyse de dernier kilometre ne donne rien : ce n'est pas la meme famille de role.",
+      "source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md"
+    },
+    "dsv": {
+      "canonique": "DSV",
+      "champ": "carrier.name",
+      "motifs": [
+        "DSV"
+      ],
+      "note": "Affretement. C'est aussi l'emetteur du taux gazole hebdomadaire utilise pour la surcharge carburant."
+    },
+    "lkw walter": {
+      "canonique": "LKW Walter",
+      "champ": "carrier.name",
+      "motifs": [
+        "LKW"
+      ],
+      "note": "Traction internationale. Attention : 'LKW Austria I AT Wiener Neudorf' est un autre acteur."
+    },
+    "heppner": {
+      "canonique": "Heppner",
+      "champ": "carrier.name",
+      "motifs": [
+        "HEPPNER"
+      ]
+    },
+    "planzer": {
+      "canonique": "Planzer",
+      "champ": "carrier.name",
+      "motifs": [
+        "PLANZER"
+      ]
+    },
+    "db schenker": {
+      "canonique": "DB Schenker",
+      "champ": "carrier.name",
+      "motifs": [
+        "SCHENKER"
+      ]
+    },
+    "schenker": {
+      "memeque": "db schenker"
+    },
+    "prevote": {
+      "canonique": "Prevote (Expedis)",
+      "champ": "carrier.name",
+      "motifs": [
+        "PREVOT"
+      ],
+      "note": "Actif comme transporteur cote Shiptify ('Prevote I Meru'), mais PROSPECT messagerie non retenu cote portefeuille. Ne pas conclure de sa presence ici qu'il est au portefeuille.",
+      "source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md, prospects."
+    },
+    "amblainville": {
+      "canonique": "Amblainville (AMB)",
+      "champ": "address_from.name",
+      "motifs": [
+        "AMBLAINVILLE",
+        "AMB"
+      ],
+      "note": "Entrepot de l'Oise, 83 000 m2, 85 portes de quai. Exploite par VU Logistics AMB. Cote Peripass, c'est le tenant AMB."
+    },
+    "moulins": {
+      "canonique": "Montbeugny / Moulins (AUV)",
+      "champ": "address_from.name",
+      "motifs": [
+        "MONTBEUGNY",
+        "MOULINS",
+        "AUV"
+      ],
+      "note": "Le MEME site sous deux noms : 'Montbeugny' cote exploitation (la commune), 'Moulins' cote projets (la ville voisine). Ouvert en decembre 2025. Cote Peripass, c'est le tenant AUV.",
+      "source": "01_CONTEXTE/SITES.md"
+    },
+    "montbeugny": {
+      "memeque": "moulins"
+    },
+    "auv": {
+      "memeque": "moulins"
+    },
+    "amb": {
+      "memeque": "amblainville"
+    },
+    "mions": {
+      "canonique": "Mions (Lyon)",
+      "champ": "address_dest.name",
+      "motifs": [
+        "MIONS"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "villefranche": {
+      "canonique": "Villefranche-sur-Saone",
+      "champ": "address_dest.name",
+      "motifs": [
+        "VILLEFRANCHE"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "chantonnay": {
+      "canonique": "Chantonnay",
+      "champ": "address_dest.name",
+      "motifs": [
+        "CHANTONNAY"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "montpellier": {
+      "canonique": "Montpellier",
+      "champ": "address_dest.name",
+      "motifs": [
+        "MONTPELLIER"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "marseille": {
+      "canonique": "Marseille",
+      "champ": "address_dest.name",
+      "motifs": [
+        "MARSEILLE"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "grasse": {
+      "canonique": "Grasse",
+      "champ": "address_dest.name",
+      "motifs": [
+        "GRASSE"
+      ],
+      "note": "Agence VU Delivery."
+    },
+    "metz": {
+      "canonique": "Metz",
+      "champ": "address_dest.name",
+      "motifs": [
+        "METZ"
+      ],
+      "note": "Agence VU Delivery dite « Luxembourg » dans les documents de plan de transport. Chercher les deux libelles."
+    },
+    "madrid": {
+      "canonique": "Madrid",
+      "champ": "address_dest.name",
+      "motifs": [
+        "MADRID"
+      ],
+      "note": "Agence VU Delivery Espagne. GTS / Global Team Solutions y est sous-traitant last mile."
+    },
+    "jacky perrenot": {
+      "memeque": "perrenot"
+    },
+    "tamdis": {
+      "canonique": "TAMDIS (groupe Perrenot)",
+      "champ": "address_dest.name",
+      "motifs": [
+        "TAMDIS"
+      ],
+      "groupe": "Perrenot",
+      "note": "Filiale du groupe Perrenot, comme VIR et JP Home. Zone Europe Sud. Dernier kilometre : absent du referentiel des transporteurs Shiptify, le cote facture est dans Yooz (societe DistriService).",
+      "source": "Precise par Guillaume Champin le 2026-09-01."
+    }
+  },
+  "portefeuille_dernier_kilometre": {
+    "_pourquoi": [
+      "Ces noms sont ceux du portefeuille de livraison. S'ils ne ressortent pas du referentiel",
+      "Shiptify, ce n'est PAS qu'ils n'existent pas : c'est que la question ne se pose pas ici.",
+      "Le connecteur doit le dire au lieu de rendre un tableau vide.",
+      "",
+      "Ou aller : le cote facture est dans Yooz (connecteur yooz-factures), le contrat et la",
+      "performance dans 02_TRANSPORTEURS/<NOM>/ de la bibliotheque d'equipe."
+    ],
+    "source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md, annuaire par zone, releve 2026-08-26.",
+    "noms": [
+      "VIR",
+      "JP Home",
+      "VUD",
+      "VU Delivery",
+      "Cogepart",
+      "Beeliv",
+      "CCV",
+      "Geodis",
+      "Chronopost",
+      "Colissimo",
+      "Relais Colis",
+      "Agrikolis",
+      "Tred Chariot",
+      "Trusk",
+      "Dealt",
+      "TSN Groen",
+      "TAMDIS",
+      "ADER",
+      "MRW",
+      "Bartolini",
+      "BRT",
+      "Rhenus",
+      "INVIO",
+      "AIT",
+      "Posten Bring",
+      "Bring",
+      "LGT",
+      "RTC",
+      "DHL Home",
+      "DHL Freight",
+      "SwissPost Home",
+      "Cargoe",
+      "Casa Delivery",
+      "No Limit",
+      "GLS",
+      "Mondial Relay",
+      "TKN",
+      "Parnass",
+      "Flex Premium",
+      "B9 Transport",
+      "New Trans",
+      "APM",
+      "Riera",
+      "TMS",
+      "GTS",
+      "Global Team Solutions"
+    ]
+  },
+  "pieges_de_nommage": {
+    "_source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md et VOCABULAIRE.md",
+    "Rhenus": "QUATRE entites distinctes : Italie, Pologne, une etude Pays-Bas, une entite Road / Overland Benelux. Ne jamais dire « Rhenus » sans preciser laquelle.",
+    "Posten Bring / Bring": "DEUX prestataires distincts du meme groupe. Posten Bring livre la Norvege, Bring livre la Suede. Au Danemark les deux perimetres coexistent : Bring y fait le colis postal, RTC Transport le meuble et l'encombrant.",
+    "INVIO": "Le prestataire italien de Mantoue. « Nvio » n'existe pas, c'etait une coquille.",
+    "AIT": "Royaume-Uni ET Republique d'Irlande, pas le seul Royaume-Uni.",
+    "Casa Delivery": "Finlande, malgre le nom.",
+    "No Limit": "Aussi ecrit « Nos Limites » dans le corpus. Meme acteur.",
+    "Colissimo / Colis Postal": "Deux dossiers distincts, ne pas confondre.",
+    "DHL Home / DHL Freight": "Deux prestations et deux dossiers, Allemagne et Autriche.",
+    "VUD": "Capacite interne de Vente-unique, PAS un prestataire du portefeuille.",
+    "Sennder": "Middle mile, pas last mile.",
+    "Groupe Perrenot": "VIR, JP Home et TAMDIS appartiennent au MEME groupe (Jacky Perrenot). Trois entites, un groupe : preciser si un chiffre est par entite ou par groupe.",
+    "Distri Service": "Ancienne societe de Vente-unique, PAS un transporteur du groupe Perrenot. Aucun lien avec VIR autre que contractuel."
+  },
+  "prestations": {
+    "_source": "AGENTS.md du vault et 01_CONTEXTE/VOCABULAIRE.md",
+    "LX": "Pas de porte, 1 personne",
+    "LC": "Pas de porte, 2 personnes",
+    "LS": "Dans la piece",
+    "LD": "Avec deballage",
+    "LM": "Avec montage",
+    "ED": "Emporte depot",
+    "MES": "Messagerie",
+    "MESB": "Messagerie B",
+    "FDS": "Franco de suite",
+    "EFDS": "Variante FDS"
+  },
+  "zones": {
+    "_source": "01_CONTEXTE/SITES.md et EQUIPE_LT.md, releve 2026-08-26.",
+    "_note": "Les Pays-Bas apparaissent dans DEUX zones. Decoupage reel a trancher avant tout reporting par zone.",
+    "FR": "Pole FR - France et Benelux",
+    "BE": "Pole FR - France et Benelux",
+    "LU": "Pole FR - France et Benelux",
+    "NL": "A TRANCHER - cite dans Pole FR et dans Pole Nord",
+    "IT": "Pole Sud - Europe Sud et Iles Britanniques",
+    "ES": "Pole Sud - Europe Sud et Iles Britanniques",
+    "PT": "Pole Sud - Europe Sud et Iles Britanniques",
+    "GB": "Pole Sud - Iles Britanniques. Contraintes douanieres post-Brexit : ne pas agreger avec le sud de l'Europe.",
+    "IE": "Pole Sud - Iles Britanniques. Meme remarque que GB.",
+    "CH": "Pole Nord - hors Union europeenne : VOEC, TVA a l'import, dedouanement.",
+    "AT": "Pole Nord - Europe Centrale et Nordique",
+    "DE": "Pole Nord - Europe Centrale et Nordique",
+    "PL": "Pole Nord - Europe Centrale et Nordique",
+    "NO": "Pole Nord - hors Union europeenne : VOEC, TVA a l'import, dedouanement.",
+    "DK": "Pole Nord - Europe Centrale et Nordique",
+    "SE": "Pole Nord - Europe Centrale et Nordique"
+  },
+  "colonnes_a_connaitre": {
+    "_pourquoi": [
+      "Taux de remplissage MESURES le 2026-08-28 sur les 4 050 envois crees du 01/05 au",
+      "27/08/2026, parcours complet. Ils ne sont pas une opinion sur la donnee : ils disent",
+      "quelle colonne on peut sommer et laquelle rendrait un total faux avec l'air d'un total.",
+      "A recontroler avec shiptify_columns apres une synchro : un taux bouge."
+    ],
+    "cost": "INUTILISABLE. Renseigne sur 100 % des lignes, et vaut 0.000 sur 100 % d'entre elles. Ne jamais sommer cost : le total sera zero. Le montant est dans price.",
+    "price": "LE montant a utiliser. Renseigne sur 96,4 % des lignes. C'est la colonne de reference pour un cout de ligne middle mile.",
+    "total_weight": "Renseigne sur 63,7 % des lignes seulement. Une somme ne porte donc que sur deux tiers du perimetre : le dire, ou ne pas la citer.",
+    "total_volume": "Renseigne sur 63,6 % des lignes. Meme reserve que le poids.",
+    "total_linear_meters": "Renseigne sur 63,6 % des lignes. Meme reserve.",
+    "tracking_code": "Renseigne sur 8,5 % des lignes, et non vide sur 1,1 %. Ne pas en conclure une absence de suivi : ce n'est pas la source du tracking.",
+    "created_at": "Date de CREATION de l'envoi. C'est elle que filtrent created_date_from / created_date_to.",
+    "date": "Date de DEPART prevue, souvent posterieure a created_at et parfois dans le futur. Grouper par mois sur cette colonne apres avoir filtre sur created_at fait apparaitre des mois hors perimetre."
+  },
+  "questions_frequentes": [
+    {
+      "question": "combien d'envois vers l'Espagne le mois dernier",
+      "outil": "shiptify_summary",
+      "appel": "group_by='address_dest.country', created_date_from/to sur le mois"
+    },
+    {
+      "question": "quel transporteur a le plus roule en juillet",
+      "outil": "shiptify_summary",
+      "appel": "group_by='carrier.name', metric='nb'"
+    },
+    {
+      "question": "les flux VIR de la semaine",
+      "outil": "shiptify_summary",
+      "appel": "group_by='address_dest.name', carrier='VIR' - le resolveur applique VIR ET JP Home ET JPH"
+    },
+    {
+      "question": "cout moyen par pays de destination",
+      "outil": "shiptify_summary",
+      "appel": "group_by='address_dest.country', metric='cost'"
+    },
+    {
+      "question": "l'historique sur douze mois pour un top 10 transporteur",
+      "outil": "shiptify_sync puis shiptify_sql",
+      "appel": "le direct plafonne a 6 000 lignes, l'historique passe par le cache"
+    }
+  ]
+}

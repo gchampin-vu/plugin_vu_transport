@@ -60,6 +60,46 @@ que les filtres de la grille ne savent pas exprimer, ou produire un CSV.
    ils ne sont pas devinables, et **ce ne sont pas ceux de la grille**.
 3. `yooz_export_csv` des que le resultat doit etre joint a un mail.
 
+## Le tiers se resout, il ne se saisit JAMAIS a la main
+
+C'est le piege le plus couteux de ce connecteur, et il rend une reponse fausse
+qui a l'air d'une reponse.
+
+**Le code tiers stocke par Yooz n'est pas `HVIR` : c'est `HVIR           (H)`**,
+avec son remplissage d'espaces et son suffixe de lettre. Et la grille n'accepte
+que la forme EXACTE. Mesure du 2026-08-28, societe Vente-Unique, du 01/01 au
+27/08/2026 :
+
+| `third_code` | Resultat |
+|---|---|
+| `HVIR` | **0 document**, HTTP 200, aucune erreur |
+| `HVIR           (H)` | 24 documents, 3 142 015,68 EUR TTC |
+
+Zero document se lit comme « ce transporteur ne nous a rien facture ». Rien ne
+signale l'erreur.
+
+**Donc : passe `third="VIR"`, pas `third_code`.** `yooz_live_invoices` et
+`yooz_live_summary` acceptent le nom maison et font la resolution eux-memes,
+contre le cache, qui porte les codes tels que Yooz les ecrit. Ils **restreignent
+aussi la ou les societes** qui facturent ce tiers - deuxieme piege silencieux :
+VIR est chez Vente-Unique, TAMDIS chez DistriService, et interroger la mauvaise
+societe rend zero.
+
+`yooz_resolve_third` sert a VOIR la resolution avant de trancher. Sur « VIR » il
+rend quatre entites : `VIR TRANSPORT`, `VIR BENELUX`, `JP HOME` et
+`AGEDISS - JP HOME`, sur deux societes. **Les additionner est une decision, pas
+un automatisme** - ce sont des perimetres et des pays differents. Le connecteur
+les somme par defaut et le dit ; si le perimetre demande est plus etroit, passe
+les codes exacts.
+
+Meme prudence sur « Bring » : le motif ramene AUSSI Posten Bring, qui est un
+autre prestataire - Posten Bring livre la Norvege, Bring la Suede. Regarde les
+libelles avant d'additionner. `yooz_lexique` porte ces pieges.
+
+**Si le cache est vide, la resolution ne marche pas** et le connecteur le dit :
+il retombe alors sur un filtre de libelle applique cote client, qui ne compte
+rien sur un resultat tronque. Lance `yooz_sync` une fois.
+
 ## Les pieges du chemin direct
 
 **Un filtre que la grille ne sait pas appliquer est IGNORE EN SILENCE.** Elle
@@ -91,6 +131,24 @@ plafond : sur un resultat tronque, ils ne comptent rien. Resserre la periode.
 
 **Le numero de piece ne se cherche qu'en entier.** La recherche partielle de
 numero n'existe pas sur ce chemin.
+
+**L'operateur `in` fonctionne, lui.** Verifie le 2026-08-28 : plusieurs codes
+tiers separes par une virgule sont bien tous appliques. C'est ce qui permet a
+`third=` de sommer plusieurs entites en un appel.
+
+## Un compte affiche n'est pas un total
+
+Corrige le 2026-08-28 : `yooz_sql`, `yooz_invoices` et `yooz_summary`
+annoncaient « tronque : 101 lignes, 100 affichees » quand la requete en comptait
+peut-etre cinquante mille. Le message rassurait au lieu d'alerter, et 101
+finissait cite comme un volume.
+
+Ils annoncent maintenant **le vrai total**, calcule par SQLite sans rapatrier :
+« la requete rend 49 160 ligne(s) AU TOTAL, 100 sont affichees ». C'est ce
+nombre-la qui est citable, jamais celui des lignes affichees.
+
+De meme, `yooz_export_csv` dit desormais si le fichier est tronque : un export
+qui s'arretait pile a `max_rows` etait indiscernable d'un export complet.
 
 ## Les pieges du cache
 

@@ -64,6 +64,29 @@ def boom(*args, **kwargs):
 
 
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# vu_cache.py est DUPLIQUE a l'identique dans les trois plugins : un plugin
+# Claude Code est autonome et ne peut pas importer son voisin. Cette empreinte
+# est la contrepartie de la duplication : si quelqu'un corrige le module dans
+# un seul plugin, ce controle le dit, au lieu de laisser les trois copies
+# diverger en silence. En cas d'echec : recopier le fichier dans les trois
+# plugins, puis mettre a jour l'empreinte dans les trois test_offline.py.
+# --------------------------------------------------------------------------
+import hashlib as _hashlib  # noqa: E402
+
+EMPREINTE_VU_CACHE = "d346b3cfc1ac0e21ab44640a6004827f564dbd5b3b9cfaf865ce36f24204fdb2"
+# chr(13) plutot qu'un echappement : la CHAINE de generation de ce fichier a
+# deja mange une fois la sequence litterale, et le test ne compilait plus.
+_vu_cache_brut = (
+    HERE / "vu_cache.py"
+).read_text(encoding="utf-8").replace(chr(13), "").encode("utf-8")
+check(
+    "vu_cache.py est la version partagee attendue",
+    _hashlib.sha256(_vu_cache_brut).hexdigest() == EMPREINTE_VU_CACHE,
+    _hashlib.sha256(_vu_cache_brut).hexdigest(),
+)
+
+
 section("1. Le contrat et la liste blanche")
 
 spec = server._spec()
@@ -265,7 +288,28 @@ try:
         server._sites(""), "/visitors", None, max_rows=50
     )
     check("max_rows s'applique PAR SITE", len(rows) == 55, str(len(rows)))
-    check("la troncature nomme le site", truncated == ["AUV"], str(truncated))
+    check(
+        "la troncature nomme le site ET la raison",
+        truncated == ["AUV (max_rows)"],
+        str(truncated),
+    )
+
+    # Correction du 2026-08-28 : un perimetre qui fait EXACTEMENT max_rows
+    # lignes et qui est complet ne doit plus etre annonce tronque. Avant, un
+    # chiffre juste devenait non citable.
+    rows_pile, trunc_pile, _notes_pile = server._collect(
+        server._sites("AMB"), "/visitors", None, max_rows=5
+    )
+    check(
+        "un perimetre pile a max_rows n'est PAS dit tronque",
+        trunc_pile == [],
+        str(trunc_pile),
+    )
+    check(
+        "et il rend bien toutes ses lignes",
+        len(rows_pile) == 5,
+        str(len(rows_pile)),
+    )
 
     rendered = server._render_table(rows, "entete", truncated, notes, "site,id")
     check(
@@ -316,8 +360,28 @@ check("une colonne absente rend vide, sans lever", sel[0]["colonne_absente"] == 
 check("fields='*' rend tout", server._select([flat], "*")[0] == flat)
 
 check(
-    "VISITOR_BRIEF utilise le joker",
-    "fields.*" in server.VISITOR_BRIEF and server.VISITOR_BRIEF.startswith("site,"),
+    "VISITOR_BRIEF n'utilise PLUS le joker de champs personnalises",
+    "fields.*" not in server.VISITOR_BRIEF and server.VISITOR_BRIEF.startswith("site,"),
+    server.VISITOR_BRIEF,
+)
+check(
+    "VISITOR_BRIEF nomme les champs personnalises utiles",
+    all(
+        nom in server.VISITOR_BRIEF
+        for nom in ("fields.Num\u00e9ro RDV", "fields.Transporteur", "fields.Quai Attribu\u00e9")
+    ),
+    server.VISITOR_BRIEF,
+)
+check(
+    "VISITOR_BRIEF porte les trois durees",
+    all(
+        nom in server.VISITOR_BRIEF
+        for nom in (
+            "waitingTimeMinutes",
+            "turnaroundTimeMinutes",
+            "processingTimeMinutes",
+        )
+    ),
 )
 
 section("9. Normalisation des reponses")
@@ -490,7 +554,17 @@ os.environ.update(_poste)
 section("12. Surface MCP")
 
 tools = [n for n in dir(server) if n.startswith("peripass_")]
-check("20 outils exposes", len(tools) == 20, str(len(tools)))
+check("27 outils exposes", len(tools) == 27, str(len(tools)))
+for attendu in (
+    "peripass_summary",
+    "peripass_lexique",
+    "peripass_sync",
+    "peripass_sql",
+    "peripass_tables",
+    "peripass_columns",
+    "peripass_export_sql",
+):
+    check(f"outil {attendu} expose", attendu in tools, ", ".join(sorted(tools)))
 import inspect  # noqa: E402
 
 bad_signature = [

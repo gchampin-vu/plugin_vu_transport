@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "peripass",
   "displayName": "Peripass (lecture seule)",
-  "version": "1.1.0",
-  "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs, creneaux, arrivees et departs, assets sur la cour, taches, profils et tableaux de dispatch. Export CSV pagine, sur demande explicite.",
+  "version": "1.2.0",
+  "description": "Interroge le yard management Peripass en lecture seule, sur les deux sites AUV et AMB : visiteurs et creneaux de quai, arrivees, check-in et departs, temps d'attente et de rotation, assets sur la cour, taches, profils et tableaux de dispatch. Agregation cote serveur (moyenne, mediane, p90 des temps d'attente), lexique metier qui comprend « Moulins » et « creneau », cache local SQLite pour l'historique sans reconsommer le quota. Multi-tenant : une cle par site, et une colonne site sur chaque resultat. 27 outils.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
   },

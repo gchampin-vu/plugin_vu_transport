@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "reflex-wms",
+  "displayName": "Reflex WMS (lecture seule)",
+  "version": "1.0.0",
+  "description": "Interroge le WMS Reflex en lecture seule, en langage naturel : le MLD Hardis des 1 985 tables est embarque dans le connecteur, donc les questions de schema repondent hors ligne et une requete T-SQL juste s'ecrit sans decouverte sur la production. Preparations, receptions, expeditions, chargements, stock, mouvements. Garde-fous : gouverneur de cout, delai borne, WITH (NOLOCK) exige, une requete a la fois. Export CSV sur demande explicite. Configuration d'equipe partagee : rien a saisir sur un poste qui synchronise la bibliotheque. Par defaut une lecture interroge la base d'EPURATION puis la base COURANTE et dit laquelle a repondu. Outils annotes readOnlyHint conformement a la specification MCP.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "mcpServers": "./.mcp.json",
+  "keywords": [
+    "reflex",
+    "wms",
+    "entrepot",
+    "hardis",
+    "sql",
+    "preparation",
+    "reception",
+    "stock",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "auth": {
+      "type": "string",
+      "title": "Mode d'authentification (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/reflex.shared.env, qui pose 'sql'. L'instance Reflex refuse l'authentification Windows des comptes du domaine CAFOM (erreur 18456), l'acces passe donc par le compte de service de l'equipe. A ne renseigner que pour forcer 'trusted' le jour ou l'IT aura ouvert la lecture aux comptes du domaine.",
+      "required": false
+    },
+    "user": {
+      "type": "string",
+      "title": "Compte SQL (optionnel)",
+      "description": "Laisse vide : le compte de service de l'equipe est deja dans reflex.shared.env, et il n'y a rien a saisir. A ne renseigner que pour utiliser un acces DIFFERENT de celui de l'equipe - un compte nominatif, un environnement de recette. Ce qui est saisi ici passe DEVANT la configuration d'equipe.",
+      "required": false
+    },
+    "password": {
+      "type": "string",
+      "title": "Mot de passe SQL (optionnel)",
+      "description": "Laisse vide dans le cas normal. A ne renseigner qu'avec le compte ci-dessus, pour un acces different de celui de l'equipe. Il reste alors sur ton poste, dans le coffre du systeme, et ne traverse jamais la conversation.",
+      "required": false,
+      "sensitive": true
+    },
+    "server": {
+      "type": "string",
+      "title": "Serveur SQL (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/reflex.shared.env. A ne renseigner que pour pointer un environnement de recette depuis ce poste.",
+      "required": false
+    },
+    "database": {
+      "type": "string",
+      "title": "Base courante (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans reflex.shared.env. Par defaut RFXCAFPRDDAT.",
+      "required": false
+    },
+    "database_epu": {
+      "type": "string",
+      "title": "Base d'epuration (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans reflex.shared.env. Par defaut RFXCAFPRDEPU - c'est la base ou Reflex range l'historique sorti de la base courante. Meme schema, memes tables.",
+      "required": false
+    },
+    "driver": {
+      "type": "string",
+      "title": "Pilote ODBC (optionnel)",
+      "description": "Laisse vide : le connecteur choisit le meilleur pilote present, et retombe sur 'SQL Server', livre avec Windows. C'est ce qui garantit qu'aucun logiciel n'est a installer en plus du plugin. A ne renseigner que si /reflex-setup signale un probleme de pilote.",
+      "required": false
+    },
+    "query_timeout_s": {
+      "type": "string",
+      "title": "Delai maximum par requete, en secondes (optionnel)",
+      "description": "Laisse vide : 60 s par defaut, plafond dur a 600 s. C'est un garde-fou contre la requete qui bloque le poste et charge la production - ne le releve qu'en connaissance de cause, apres avoir verifie que la requete est bien bornee (filtre sur le depot, periode sur les colonnes de date brutes).",
+      "required": false
+    },
+    "cost_limit": {
+      "type": "string",
+      "title": "Plafond de cout estime du plan (optionnel)",
+      "description": "Laisse vide : 5000 par defaut. SQL Server estime le cout d'un plan avant de l'executer et REFUSE de demarrer au-dela. C'est le seul garde-fou qui agit avant que la premiere ligne ne soit lue, et celui qui arrete un produit cartesien net. 0 le desactive - a n'envisager que pour une extraction lourde ponctuelle.",
+      "required": false
+    },
+    "max_rows": {
+      "type": "string",
+      "title": "Plafond de lignes rendues a l'ecran (optionnel)",
+      "description": "Laisse vide : 200 par defaut. Un resultat tronque est signale comme tel, et ne doit jamais etre cite comme un volume.",
+      "required": false
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut, le dossier de donnees du plugin. C'est le seul reglage que la configuration d'equipe REFUSE de porter : un chemin valable sur un poste n'existe pas sur les vingt-cinq autres.",
+      "required": false
+    }
+  }
+}

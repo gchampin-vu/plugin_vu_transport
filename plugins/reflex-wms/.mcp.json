@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "reflex": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "REFLEX_AUTH": "${user_config.auth}",
+        "REFLEX_USER": "${user_config.user}",
+        "REFLEX_PASSWORD": "${user_config.password}",
+        "REFLEX_SERVER": "${user_config.server}",
+        "REFLEX_DATABASE": "${user_config.database}",
+        "REFLEX_DATABASE_EPU": "${user_config.database_epu}",
+        "REFLEX_DRIVER": "${user_config.driver}",
+        "REFLEX_QUERY_TIMEOUT_S": "${user_config.query_timeout_s}",
+        "REFLEX_COST_LIMIT": "${user_config.cost_limit}",
+        "REFLEX_MAX_ROWS": "${user_config.max_rows}",
+        "REFLEX_EXPORT_DIR": "${user_config.export_dir}"
+      }
+    }
+  }
+}

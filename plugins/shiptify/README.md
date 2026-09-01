@@ -92,11 +92,6 @@ service courte :
 Le poste est prioritaire sur l'equipe : un reglage d'equipe est un point de
 depart commun, pas une contrainte.
 
-**Aucun secret dans le fichier d'equipe, et ce n'est pas qu'une consigne** : le
-serveur lit ce fichier a travers une **liste blanche**. Un `SHIPTIFY_API_KEY`
-pose la-bas est ignore, et signale par `/shiptify-setup`. Le detail est dans
-`08_ENGINE/04_mcp/00_config/README.md`.
-
 **La saisie de la cle se fait dans l'interface de Claude Code**, jamais dans la
 conversation. Deux moments possibles, au choix de l'utilisateur :
 

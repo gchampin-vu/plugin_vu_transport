@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "JIRA_TENANTS": "${user_config.tenants}",
+        "JIRA_PROJET_EMAIL": "${user_config.projet_email}",
+        "JIRA_PROJET_TOKEN": "${user_config.projet_token}",
+        "JIRA_PROJET_BASE_URL": "${user_config.projet_base_url}",
+        "JIRA_WF_EMAIL": "${user_config.wf_email}",
+        "JIRA_WF_TOKEN": "${user_config.wf_token}",
+        "JIRA_WF_BASE_URL": "${user_config.wf_base_url}",
+        "JIRA_EXPORT_DIR": "${user_config.export_dir}",
+        "JIRA_SHARED_ENV": "${user_config.shared_env}"
+      }
+    }
+  }
+}

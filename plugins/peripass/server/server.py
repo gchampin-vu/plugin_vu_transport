@@ -40,6 +40,7 @@ Voir README.md.
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import datetime as dt
 import functools
@@ -51,10 +52,15 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
+import time
+import unicodedata
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+import vu_cache as cache
 
 # Les deux sites de Vente-unique, et leur racine d'API historique. Ce sont les
 # URL du script Power Query, celles qui sont eprouvees. La forme moderne
@@ -78,6 +84,23 @@ DEFAULT_MAX_PAGES = 60
 
 # Plafond de caracteres rendus dans la conversation par un outil de liste.
 RENDER_MAX_CHARS = 24_000
+
+# On rejoue une panne passagere, mais PAS un 429 : sur Peripass le quota compte
+# les ressources lues, pas les requetes. Insister ne fait pas passer l'appel, ca
+# consomme la fenetre suivante. Le message d'erreur oriente vers le cache.
+RETRY_ATTEMPTS = 3
+RETRY_STATUSES = (500, 502, 503, 504)
+
+# Colonnes numeriques du cache : sans ce typage, AVG() moyenne des chaines.
+NUMERIC_COLUMNS = {
+    "waitingTimeMinutes",
+    "turnaroundTimeMinutes",
+    "processingTimeMinutes",
+    "id",
+    "siteId",
+}
+
+LEXIQUE_FILE = pathlib.Path(__file__).resolve().parent / "lexique.json"
 
 # Dossiers synchronises : un secret n'y vit pas.
 SYNCED_MARKERS = ("/onedrive", "cafom", "sharepoint", "dropbox", "google drive")
@@ -108,14 +131,25 @@ BLOCKED_PATHS = {
 # `fields.*` est un joker de prefixe : il prend tous les champs personnalises
 # reellement presents, sans avoir a les nommer - ce que le script Power Query
 # faisait a la main, en listant "Numero RDV", "Transporteur", "FRAQ"...
+# Les noms de champs personnalises portent leurs accents et leurs espaces : ce
+# sont des DONNEES, pas de la prose, et search_field les attend au caractere
+# pres. Ils ne suivent donc pas la convention sans accent du reste du fichier.
+#
+# Le joker `fields.*` a ete RETIRE de cette projection le 2026-08-28. Mesure :
+# il faisait entrer les 19 a 24 champs personnalises du tenant, et la
+# projection dite « courte » pesait 341 caracteres par ligne contre 975 en
+# colonnes completes - un facteur 3, la ou Shiptify obtient un facteur 10. Sur
+# 600 lignes ramenees, 70 seulement s'affichaient. Les cinq champs retenus
+# ci-dessous sont ceux qui portent la question metier ; `fields.*` reste
+# disponible en le demandant explicitement.
 VISITOR_BRIEF = (
     "site,id,displayName,status,currentLocation,"
-    "activeProfile,dispatchDashboard,yardLocation,"
-    "visitorTimeStampSlotStart,visitorTimeStampSlotEnd,"
-    "visitorTimeStampArrived,visitorTimeStampCheckedIn,"
-    "visitorTimeStampCheckedOut,visitorTimeStampDeparted,"
+    "activeProfile,yardLocation,"
+    "visitorTimeStampSlotStart,visitorTimeStampArrived,"
+    "visitorTimeStampCheckedIn,visitorTimeStampDeparted,"
     "waitingTimeMinutes,turnaroundTimeMinutes,processingTimeMinutes,"
-    "currentHost.name,fields.*"
+    "fields.Numéro RDV,fields.Transporteur,fields.Quai Attribué,"
+    "fields.Numéro tournée,fields.Activité"
 )
 
 ASSET_BRIEF = (
@@ -526,11 +560,26 @@ def _engine_roots() -> list[pathlib.Path]:
 
 
 def _shared_env_candidates() -> list[pathlib.Path]:
-    """Emplacements du fichier d'equipe essayes, dans l'ordre."""
+    """Emplacements du fichier d'equipe essayes, dans l'ordre.
+
+    **Un chemin explicite est EXCLUSIF.** Avant le 2026-08-28, la variable
+    d'environnement etait ajoutee en tete puis la recherche continuait sous le
+    profil : pointer un fichier precis ne desactivait donc pas le fichier
+    d'equipe reel, il le mettait juste en second. Consequence mesuree, et elle
+    n'est pas theorique : la suite de controles hors-ligne pointe un fichier
+    inexistant pour simuler un poste sans configuration d'equipe, et elle
+    tournait en fait avec les vraies cles - sept controles echouaient sur la
+    machine de celui qui developpe, c'est-a-dire la seule ou la suite est
+    lancee. Un garde-fou qui echoue toujours finit par etre ignore.
+
+    Le meme piege vaut en exploitation : qui pointe un fichier de recette
+    attend ce fichier, pas un repli silencieux sur la configuration de
+    production.
+    """
     out: list[pathlib.Path] = []
     explicit = (os.environ.get("PERIPASS_SHARED_ENV") or "").strip()
     if explicit:
-        out.append(pathlib.Path(explicit))
+        return [pathlib.Path(explicit)]
     for root in _engine_roots():
         out.append(root.joinpath(*SHARED_SUBPATH, SHARED_FILE_NAME))
     return out
@@ -676,24 +725,23 @@ def _page_size() -> int:
     return max(1, min(PAGE_SIZE_MAX, want))
 
 
-def _export_dir() -> pathlib.Path:
-    """Ou atterrissent les CSV. Quatre cas, dans cet ordre.
+def _cache_path() -> pathlib.Path:
+    raw = _env("PERIPASS_CACHE_DB")
+    return pathlib.Path(raw) if raw else _local_root() / "peripass_cache.sqlite"
 
-    Le serveur tourne dans deux contextes : installe dans le vault de
-    Guillaume, ou installe comme plugin chez un collegue qui n'a pas de vault.
-    Un chemin relatif au code serait juste dans le premier cas et absurde dans
-    le second.
+
+def _export_dir() -> pathlib.Path:
+    """Ou atterrissent les CSV.
+
+    Le reglage explicite gagne ; sinon la racine locale, qui est la meme quel
+    que soit le mode de lancement. Le dossier de donnees du plugin n'est plus
+    utilise : il depend de l'identifiant d'installation, et ce poste en porte
+    deja deux - un export ecrit sous l'un serait introuvable sous l'autre.
     """
     raw = _env("PERIPASS_EXPORT_DIR")
     if raw:
         return pathlib.Path(raw)
-    plugin_data = (os.environ.get("CLAUDE_PLUGIN_DATA") or "").strip()
-    if plugin_data:
-        return pathlib.Path(plugin_data) / "exports"
-    assets = pathlib.Path(__file__).resolve().parents[2] / "Assets"
-    if assets.is_dir():
-        return assets / "peripass"
-    return pathlib.Path.cwd() / "peripass-exports"
+    return _local_root() / "exports"
 
 
 # --------------------------------------------------------------------------
@@ -701,8 +749,32 @@ def _export_dir() -> pathlib.Path:
 # --------------------------------------------------------------------------
 
 def _site_code(raw: str) -> str:
-    """Normalise un code de site en identifiant de variable d'environnement."""
-    return re.sub(r"[^A-Z0-9]+", "_", raw.strip().upper()).strip("_")
+    """Normalise un code de site, en acceptant les noms maison.
+
+    « Moulins » et « Montbeugny » designent le meme site, code AUV, et personne
+    ne dit « AUV » a l'oral. Avant cette traduction, site='Moulins' echouait sur
+    un site inconnu, ce qui est la mauvaise reponse a une question juste. Les
+    alias vivent dans lexique.json, pas en dur ici.
+    """
+    code = re.sub(r"[^A-Z0-9]+", "_", raw.strip().upper()).strip("_")
+    if not code:
+        return code
+    for canonical, entry in (_lexique().get("sites") or {}).items():
+        if canonical.startswith("_") or not isinstance(entry, dict):
+            continue
+        if code == canonical.upper():
+            return canonical
+        for alias in entry.get("alias") or []:
+            if code == _site_code_raw(alias):
+                return canonical
+    return code
+
+
+def _site_code_raw(raw: str) -> str:
+    """Normalisation brute, sans traduction : evite la recursion des alias."""
+    flat = unicodedata.normalize("NFKD", str(raw or ""))
+    flat = "".join(c for c in flat if not unicodedata.combining(c))
+    return re.sub(r"[^A-Z0-9]+", "_", flat.strip().upper()).strip("_")
 
 
 class Site:
@@ -1002,6 +1074,32 @@ def _clean_query(query: dict[str, Any] | None) -> dict[str, str]:
     return out
 
 
+_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def _client() -> httpx.Client:
+    """Le client HTTP du processus, partage et garde ouvert.
+
+    Un `httpx.get` par appel rouvre la connexion TLS a chaque page. Sur
+    Peripass, ou une page coute entre 0,5 et 0,8 s et ou l'on interroge DEUX
+    tenants, le gain se voit. httpx.Client est sur en usage concurrent : c'est
+    ce qui permet d'interroger les deux sites de front dans _collect.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        with _CLIENT_LOCK:
+            if _CLIENT is None:
+                _CLIENT = httpx.Client(
+                    timeout=_timeout(),
+                    follow_redirects=True,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=8, max_connections=16
+                    ),
+                )
+    return _CLIENT
+
+
 def _request(site: Site, path: str, query: dict[str, Any] | None = None) -> Any:
     if not site.ready:
         raise ConfigError(f"Site {site.code} non configure : {site.problem}")
@@ -1009,16 +1107,26 @@ def _request(site: Site, path: str, query: dict[str, Any] | None = None) -> Any:
     if site.tenant:
         params.setdefault("tenant", site.tenant)
     url = site.base_url + path
-    try:
-        resp = httpx.get(
-            url,
-            headers=_headers(site),
-            params=params,
-            timeout=_timeout(),
-            follow_redirects=True,
-        )
-    except httpx.HTTPError as exc:
-        raise PeripassError(f"[{site.code}] Appel {path} impossible : {exc}") from exc
+    headers = _headers(site)
+    resp: httpx.Response | None = None
+    last_error = ""
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            resp = _client().get(url, headers=headers, params=params)
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+            if attempt >= 1:
+                raise PeripassError(
+                    f"[{site.code}] Appel {path} impossible : {exc}"
+                ) from exc
+            time.sleep(0.5)
+            continue
+        if resp.status_code in RETRY_STATUSES and attempt < RETRY_ATTEMPTS - 1:
+            time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+            continue
+        break
+    if resp is None:
+        raise PeripassError(f"[{site.code}] Appel {path} impossible : {last_error}")
 
     remaining = resp.headers.get("X-RateLimit-Remaining")
     if remaining is not None:
@@ -1064,6 +1172,11 @@ def _request(site: Site, path: str, query: dict[str, Any] | None = None) -> Any:
             "coute 6000 unites de quota. Resserre le perimetre de dates, "
             "baisse max_rows, ou attends la fenetre suivante "
             f"({resp.headers.get('X-RateLimit-Reset', 'horodatage non fourni')})."
+            "\n\nRefaire le meme appel n'est PAS retente automatiquement ici, "
+            "volontairement : insister ne fait pas passer la requete, ca "
+            "consomme la fenetre suivante. Si la question revient souvent sur "
+            "le meme perimetre, rapatrie-le une fois avec peripass_sync : le "
+            "cache local se relit sans quota."
         )
     if resp.status_code >= 400:
         body = (resp.text or "")[:600]
@@ -1103,8 +1216,27 @@ def _paginate(
     path: str,
     query: dict[str, Any] | None = None,
     max_rows: int = 1000,
-) -> tuple[list[dict[str, Any]], bool]:
-    """Boucle pageNumber / pageSize jusqu'a page vide. Rend (lignes, tronque).
+    render_fields: str = "",
+    render_budget: int = 0,
+) -> tuple[list[dict[str, Any]], str]:
+    """Boucle pageNumber / pageSize jusqu'a page vide. Rend (lignes, raison_arret).
+
+    La raison est vide quand la collection a ete lue en entier, et dit sinon
+    POURQUOI on s'est arrete : les trois arrets n'appellent pas la meme
+    correction.
+
+    Deux corrections datees du 2026-08-28.
+
+    1. **La troncature n'est plus annoncee a tort.** L'ancien test
+       `len(out) >= max_rows` declarait tronque un resultat qui faisait
+       exactement max_rows lignes et etait complet. Un rendu tronque n'etant pas
+       citable, un chiffre juste devenait inutilisable.
+    2. **On ne pagine plus ce qui ne sera pas affiche.** Mesure : `max_rows=300`
+       sur deux sites ramenait 600 lignes en 12 appels et en affichait 70. Sur
+       Peripass ce n'est pas seulement du temps perdu - le quota compte les
+       RESSOURCES lues, donc 530 lignes jetees sont 530 unites de quota
+       consommees pour rien.
+
 
     pageNumber est ZERO-BASED, et pageSize plafonne a 100 : c'est le contrat.
     L'API ne renvoie aucun total, la seule fin de collection fiable est donc
@@ -1117,19 +1249,32 @@ def _paginate(
     page = 0
     size = _page_size()
     cap = _max_pages()
+    used = 0
     while True:
         page_query = dict(query or {})
         page_query["pageNumber"] = page
         page_query["pageSize"] = size
         batch = _rows(_request(site, path, page_query))
-        out.extend(batch)
         page += 1
         if not batch:
-            return out, False
-        if len(out) >= max_rows:
-            return out[:max_rows], True
+            # Page vide : la collection est finie sur ce site.
+            return out, ""
+        out.extend(batch)
+        if len(out) > max_rows:
+            return out[:max_rows], "max_rows"
+        if render_budget and len(batch) >= size:
+            # Le budget n'arrete la lecture que sur une page PLEINE. Une page
+            # partielle veut dire qu'on touche la fin de la collection : payer
+            # un appel de plus pour le confirmer vaut mieux qu'annoncer une
+            # lecture incomplete alors qu'il ne restait rien - un rendu dit
+            # tronque n'est pas citable, et le chiffre juste devient inutile.
+            used += len(
+                _to_csv_text(_select([_flatten(r) for r in batch], render_fields))
+            )
+            if used >= render_budget:
+                return out, "budget"
         if page >= cap:
-            return out, True
+            return out, "max_pages"
 
 
 def _collect(
@@ -1138,6 +1283,8 @@ def _collect(
     query: dict[str, Any] | None = None,
     max_rows: int = 300,
     paged: bool = True,
+    render_fields: str = "",
+    render_budget: int = 0,
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     """Interroge chaque site et empile les lignes. Rend (lignes, tronques, notes).
 
@@ -1148,22 +1295,49 @@ def _collect(
     max_rows s'applique PAR SITE, pas au total. Deux sites a 300 lignes rendent
     donc jusqu'a 600 lignes, et le rendu le dit.
     """
+    if not sites:
+        return [], [], ["aucun site configure"]
+
+    # Le budget d'affichage se PARTAGE entre les sites : sans cela, chacun le
+    # remplit entierement et on ramene deux fois ce qui tiendra a l'ecran.
+    per_site_budget = int(render_budget / len(sites)) if render_budget else 0
+
+    def fetch(site: Site) -> tuple[Site, list[dict[str, Any]], str, str]:
+        try:
+            if paged:
+                batch, stop = _paginate(
+                    site,
+                    path,
+                    query,
+                    max_rows=max_rows,
+                    render_fields=render_fields,
+                    render_budget=per_site_budget,
+                )
+            else:
+                batch = _rows(_request(site, path, query))
+                stop = "max_rows" if len(batch) > max_rows else ""
+                batch = batch[:max_rows]
+        except (ConfigError, PeripassError) as exc:
+            return site, [], "", str(exc)
+        return site, batch, stop, ""
+
+    # Les deux tenants sont deux serveurs distincts : les interroger en serie
+    # doublait le temps de toute liste multi-site pour rien.
+    if len(sites) == 1:
+        results = [fetch(sites[0])]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(sites)) as pool:
+            results = list(pool.map(fetch, sites))
+
     rows: list[dict[str, Any]] = []
     truncated: list[str] = []
     notes: list[str] = []
-    for site in sites:
-        try:
-            if paged:
-                batch, cut = _paginate(site, path, query, max_rows=max_rows)
-            else:
-                batch = _rows(_request(site, path, query))
-                cut = len(batch) > max_rows
-                batch = batch[:max_rows]
-        except (ConfigError, PeripassError) as exc:
-            notes.append(f"[{site.code}] ECHEC : {exc}")
+    for site, batch, stop, error in results:
+        if error:
+            notes.append(f"[{site.code}] ECHEC : {error}")
             continue
-        if cut:
-            truncated.append(site.code)
+        if stop:
+            truncated.append(f"{site.code} ({stop})")
         for row in batch:
             rows.append({"site": site.code, **row})
         notes.append(f"[{site.code}] {len(batch)} ligne(s)")
@@ -1260,16 +1434,22 @@ def _render_table(
     lines = [header]
     if notes:
         lines.append("Par site : " + " | ".join(notes))
-    lines.append(f"{len(rows)} ligne(s) rendues, tous sites confondus.")
+    lines.append(f"{len(rows)} ligne(s) ramenees, tous sites confondus.")
     if truncated:
         lines.append(
-            "ATTENTION : resultat tronque sur "
+            "ATTENTION : lecture INCOMPLETE sur "
             + ", ".join(truncated)
-            + " (max_rows par site, ou garde-fou PERIPASS_MAX_PAGES, "
-            "atteint). Le compte ci-dessus n'est PAS un total : ne le cite "
-            "pas comme un volume. Resserre les filtres jusqu'a ce que le "
-            "perimetre tienne. Un export CSV ne se fait que si l'utilisateur "
-            "en a demande un."
+            + ". Le compte ci-dessus n'est PAS un total : ne le cite pas comme "
+            "un volume. 'max_rows' et 'max_pages' veulent dire qu'il restait "
+            "des lignes ; 'budget' veut dire qu'on a cesse de lire ce qui "
+            "n'aurait pas ete affiche. Pour COMPTER ou MOYENNER sur un large "
+            "perimetre, utilise peripass_summary, qui agrege cote serveur ; "
+            "pour un historique, peripass_sync puis peripass_sql."
+        )
+    else:
+        lines.append(
+            "Lecture complete sur ce perimetre, sur tous les sites interroges : "
+            "ce compte est citable, avec ses filtres."
         )
     if any("ECHEC" in n for n in notes):
         lines.append(
@@ -1291,9 +1471,10 @@ def _render_table(
             size += len(line) + 1
         body = "\n".join(kept)
         lines.append(
-            f"Rendu limite a {max(0, len(kept) - 1)} ligne(s) pour ne pas "
-            "saturer la conversation. Restreins avec fields=... ou resserre "
-            "les filtres. N'exporte en CSV que si l'utilisateur l'a demande."
+            f"Rendu limite a {max(0, len(kept) - 1)} ligne(s) sur {len(flat)} "
+            "ramenees, pour ne pas saturer la conversation. Restreins avec "
+            "fields=... ou resserre les filtres. N'exporte en CSV que si "
+            "l'utilisateur l'a demande."
         )
     lines.append("")
     lines.append(body)
@@ -1348,6 +1529,214 @@ def _guard(fn):
             return f"ERREUR : {exc}"
 
     return wrapper
+
+
+# --------------------------------------------------------------------------
+# Le lexique metier : ce qui fait qu'une question en francais trouve son filtre
+# --------------------------------------------------------------------------
+#
+# Pourquoi dans le serveur et pas dans la skill : une skill est lue une fois, en
+# debut de session, et le modele ne la relit pas avant chaque appel. Le
+# vocabulaire maison y est une intention, pas une garantie. Ici c'est le serveur
+# qui traduit, et il dit dans l'entete ce qu'il a traduit.
+#
+# Le cas d'ecole : personne ne dit « AUV » a l'oral, on dit « Moulins » ou
+# « Montbeugny ». Avant cette traduction, site='Moulins' echouait sur un site
+# inconnu - la mauvaise reponse a une question juste.
+
+_LEXIQUE: dict[str, Any] | None = None
+_LEXIQUE_ERROR: str = ""
+
+
+def _norm(text: Any) -> str:
+    """Forme comparable d'un libelle : sans accent, sans casse, sans ponctuation."""
+    raw = unicodedata.normalize("NFKD", str(text or ""))
+    raw = "".join(c for c in raw if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
+
+
+def _lexique() -> dict[str, Any]:
+    """Le lexique livre avec le connecteur. Ne leve jamais.
+
+    Un lexique absent degrade la comprehension des noms maison ; il ne doit pas
+    empecher le connecteur de lire Peripass.
+    """
+    global _LEXIQUE, _LEXIQUE_ERROR
+    if _LEXIQUE is None:
+        try:
+            _LEXIQUE = json.loads(LEXIQUE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _LEXIQUE_ERROR = f"{LEXIQUE_FILE} illisible : {exc}"
+            _LEXIQUE = {}
+    return _LEXIQUE
+
+
+def _intention(mot: str) -> str:
+    """Traduit un mot metier en valeur de timestamp_field, ou "".
+
+    « creneau » vaut SlotStart, « arrivee » vaut Arrived. Ce n'est pas un
+    confort : Peripass IGNORE EN SILENCE une periode sans champ de reference et
+    rend alors toute la base.
+    """
+    table = _lexique().get("intentions") or {}
+    index = {_norm(k): v for k, v in table.items() if not k.startswith("_")}
+    entry = index.get(_norm(mot))
+    for _ in range(4):
+        if not isinstance(entry, dict) or "memeque" not in entry:
+            break
+        entry = index.get(_norm(entry["memeque"]))
+    if isinstance(entry, dict):
+        return entry.get("timestamp_field") or ""
+    return ""
+
+
+def _transporteur_motifs(terme: str) -> list[str]:
+    """Les libelles a chercher dans le champ personnalise « Transporteur ».
+
+    La saisie n'est pas normalisee cote Peripass : « SENNDER FRANCE » pour
+    Sennder, et pour VIR il faut chercher VIR, JP HOME et JPH, puisque VIR est
+    l'ancien nom de JP Home et que les deux libelles coexistent.
+    """
+    table = _lexique().get("transporteurs") or {}
+    index = {_norm(k): v for k, v in table.items() if not k.startswith("_")}
+    found = index.get(_norm(terme))
+    if isinstance(found, list) and found:
+        return list(found)
+    return [terme] if terme else []
+
+
+# --------------------------------------------------------------------------
+# Agregation
+# --------------------------------------------------------------------------
+#
+# Le coeur du sujet yard est une MOYENNE, pas une liste : « combien de temps mes
+# camions attendent », « quel est le temps de rotation par transporteur ». Sans
+# agregation cote serveur, y repondre exige de rapatrier toutes les lignes -
+# huit mille tokens par centaine de visiteurs, et autant d'unites de quota
+# Peripass, qui compte les ressources lues.
+#
+# Ce que le rendu doit dire, et qu'il dit : sur combien de lignes la moyenne est
+# calculee, et combien de lignes n'avaient pas la valeur. Une moyenne de temps
+# d'attente calculee sur les 40 % de lignes qui portent un transporteur n'est
+# pas la moyenne du site.
+
+# Le champ d'horodatage qui correspond a chaque filtre de periode.
+_TIMESTAMP_COLUMN = {
+    "SlotStart": "visitorTimeStampSlotStart",
+    "SlotEnd": "visitorTimeStampSlotEnd",
+    "Arrived": "visitorTimeStampArrived",
+    "CheckedIn": "visitorTimeStampCheckedIn",
+    "CheckedOut": "visitorTimeStampCheckedOut",
+    "Departed": "visitorTimeStampDeparted",
+}
+
+_DERIVED_GROUPS = {"mois": 7, "month": 7, "jour": 10, "day": 10, "annee": 4, "year": 4}
+
+
+def _percentile(values: list[float], part: float) -> float:
+    """Percentile par interpolation lineaire. Liste supposee triee."""
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    position = part * (len(values) - 1)
+    low = int(position)
+    high = min(low + 1, len(values) - 1)
+    return values[low] + (values[high] - values[low]) * (position - low)
+
+
+def _aggregate(
+    flat: list[dict[str, Any]],
+    group_by: str,
+    metric: str,
+    top: int,
+    date_column: str = "",
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    """Regroupe des lignes aplaties. Rend (lignes, total, libelle_du_groupe)."""
+    key = (group_by or "site").strip()
+    cut = _DERIVED_GROUPS.get(key.lower())
+    temporel = False
+    column = date_column or "visitorTimeStampArrived"
+
+    if cut:
+        temporel = True
+        label = f"{key.lower()} ({column})"
+
+        def bucket(row: dict[str, Any]) -> str:
+            return str(row.get(column) or "")[:cut] or "(sans date)"
+
+    elif key.lower() in ("semaine", "week"):
+        temporel = True
+        label = f"semaine ({column})"
+
+        def bucket(row: dict[str, Any]) -> str:
+            raw = str(row.get(column) or "")[:10]
+            try:
+                day = dt.date.fromisoformat(raw)
+            except ValueError:
+                return "(sans date)"
+            year, week, _ = day.isocalendar()
+            return f"{year}-S{week:02d}"
+
+    else:
+        label = key
+
+        def bucket(row: dict[str, Any]) -> str:
+            return str(row.get(key, "") or "") or "(vide)"
+
+    numeric = metric.strip().lower() not in ("", "nb", "count", "nombre")
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in flat:
+        slot_key = bucket(row)
+        slot = buckets.setdefault(
+            slot_key, {label: slot_key, "nb": 0, "_valeurs": [], "nb_sans_valeur": 0}
+        )
+        slot["nb"] += 1
+        if numeric:
+            number = cache.to_number(row.get(metric))
+            if number is None:
+                slot["nb_sans_valeur"] += 1
+            else:
+                slot["_valeurs"].append(float(number))
+
+    out: list[dict[str, Any]] = []
+    for slot in buckets.values():
+        values = sorted(slot.pop("_valeurs"))
+        if numeric:
+            slot["nb_mesure"] = len(values)
+            slot["moyenne"] = round(sum(values) / len(values), 1) if values else ""
+            slot["mediane"] = round(_percentile(values, 0.5), 1) if values else ""
+            slot["p90"] = round(_percentile(values, 0.9), 1) if values else ""
+            slot["max"] = round(max(values), 1) if values else ""
+        else:
+            slot.pop("nb_sans_valeur", None)
+        out.append(slot)
+
+    if temporel:
+        out.sort(key=lambda s: str(s[label]))
+    else:
+        out.sort(key=lambda s: -s["nb"])
+
+    # Le total ne se deduit PAS des moyennes par groupe : une moyenne de
+    # moyennes est fausse des que les groupes n'ont pas la meme taille. On
+    # recalcule donc sur l'ensemble des valeurs.
+    toutes_valeurs: list[float] = []
+    if numeric:
+        for row in flat:
+            number = cache.to_number(row.get(metric))
+            if number is not None:
+                toutes_valeurs.append(float(number))
+        toutes_valeurs.sort()
+
+    total: dict[str, Any] = {"nb": sum(s["nb"] for s in out), "groupes": len(out)}
+    if numeric:
+        total["nb_mesure"] = len(toutes_valeurs)
+        total["nb_sans_valeur"] = sum(s.get("nb_sans_valeur") or 0 for s in out)
+        if toutes_valeurs:
+            total["moyenne"] = round(sum(toutes_valeurs) / len(toutes_valeurs), 1)
+            total["mediane"] = round(_percentile(toutes_valeurs, 0.5), 1)
+            total["p90"] = round(_percentile(toutes_valeurs, 0.9), 1)
+    return out[: max(1, int(top))], total, label
 
 
 # --------------------------------------------------------------------------
@@ -1895,7 +2284,15 @@ def peripass_list_visitors(
             + ", et search_field."
         )
     sites = _sites(site)
-    rows, truncated, notes = _collect(sites, "/visitors", query, max_rows=max_rows)
+    projection = fields or VISITOR_BRIEF
+    rows, truncated, notes = _collect(
+        sites,
+        "/visitors",
+        query,
+        max_rows=max_rows,
+        render_fields=projection,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = (
         "GET /visitors | sites : "
         + ", ".join(s.code for s in sites)
@@ -1903,7 +2300,7 @@ def peripass_list_visitors(
         + json.dumps(_clean_query(query), ensure_ascii=False)
         + f" | max_rows={max_rows} PAR SITE"
     )
-    return _render_table(rows, header, truncated, notes, fields or VISITOR_BRIEF)
+    return _render_table(rows, header, truncated, notes, projection)
 
 
 @mcp.tool()
@@ -2007,7 +2404,9 @@ def peripass_visitor_detail(visitor_id: int, site: str, include: str = "") -> st
                 rows, cut = _paginate(target, path, None, max_rows=200)
                 out[name] = rows
                 if cut:
-                    out[f"{name}_note"] = "resultat tronque a 200 lignes"
+                    out[f"{name}_note"] = (
+                        f"lecture incomplete ({cut}) : 200 lignes au plus"
+                    )
             else:
                 out[name] = _request(target, path)
         except PeripassError as exc:
@@ -2151,14 +2550,22 @@ def peripass_list_assets(
             + "."
         )
     sites = _sites(site)
-    rows, truncated, notes = _collect(sites, "/assets", query, max_rows=max_rows)
+    projection = fields or ASSET_BRIEF
+    rows, truncated, notes = _collect(
+        sites,
+        "/assets",
+        query,
+        max_rows=max_rows,
+        render_fields=projection,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = (
         "GET /assets | sites : "
         + ", ".join(s.code for s in sites)
         + " | filtres : "
         + json.dumps(_clean_query(query), ensure_ascii=False)
     )
-    return _render_table(rows, header, truncated, notes, fields or ASSET_BRIEF)
+    return _render_table(rows, header, truncated, notes, projection)
 
 
 @mcp.tool()
@@ -2205,14 +2612,22 @@ def peripass_list_tasks(
             + "."
         )
     sites = _sites(site)
-    rows, truncated, notes = _collect(sites, "/tasks", query, max_rows=max_rows)
+    projection = fields or TASK_BRIEF
+    rows, truncated, notes = _collect(
+        sites,
+        "/tasks",
+        query,
+        max_rows=max_rows,
+        render_fields=projection,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = (
         "GET /tasks | sites : "
         + ", ".join(s.code for s in sites)
         + " | filtres : "
         + json.dumps(_clean_query(query), ensure_ascii=False)
     )
-    return _render_table(rows, header, truncated, notes, fields or TASK_BRIEF)
+    return _render_table(rows, header, truncated, notes, projection)
 
 
 @mcp.tool()
@@ -2374,7 +2789,13 @@ def peripass_export_csv(
     target = target_dir / name
 
     try:
-        target.write_text(_to_csv_text(flat), encoding="utf-8-sig")
+        # newline="" plutot que write_text : sans lui, l'ecriture traduit
+        # les fins de ligne en CRLF sous Windows et les laisse en LF sous
+        # macOS. Le meme code produirait deux fichiers differents selon le
+        # poste, ce que la convention de construction interdit
+        # (08_ENGINE/04_mcp/README.md).
+        with target.open("w", encoding="utf-8-sig", newline="") as handle:
+            handle.write(_to_csv_text(flat))
     except OSError as exc:
         raise PeripassError(f"Ecriture impossible dans {target} : {exc}") from exc
 
@@ -2446,6 +2867,652 @@ def peripass_get(
         sites, checked, query, max_rows=max_rows, paged=paged
     )
     return _render_table(rows, header, truncated, notes, fields)
+
+
+# --------------------------------------------------------------------------
+# Le vocabulaire maison, expose comme outil
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+@_guard
+def peripass_lexique(sujet: str = "") -> str:
+    """Le vocabulaire maison que ce connecteur comprend : sites, intentions, champs.
+
+    A appeler quand une question porte un nom maison (Moulins, Montbeugny,
+    creneau, temps d'attente, rotation) et qu'on ne sait pas a quel parametre il
+    correspond, ou avant de moyenner un champ dont on ignore le remplissage.
+
+    sujet filtre l'affichage : 'sites', 'intentions', 'indicateurs', 'champs',
+    'transporteurs', 'pieges', 'questions'. Vide = tout.
+    """
+    lex = _lexique()
+    if not lex:
+        raise PeripassError(
+            f"Lexique indisponible. {_LEXIQUE_ERROR or 'fichier absent'}. Le "
+            "connecteur fonctionne quand meme, mais il ne traduit plus les noms "
+            "maison : passe les codes de site (AUV, AMB) et les valeurs d'enum "
+            "exactes."
+        )
+    want = _norm(sujet)
+    lines = [
+        f"Lexique du connecteur peripass, version {lex.get('version')} "
+        f"(mis a jour le {lex.get('updated')} par {lex.get('updated_by')}).",
+        "Source : 01_CONTEXTE/ de la bibliotheque d'equipe. Aucun chiffre ici.",
+        "",
+    ]
+
+    if not want or want.startswith("site"):
+        bloc = lex.get("sites") or {}
+        lines.append("== Sites ==")
+        for note in bloc.get("_pourquoi", []):
+            lines.append("  " + note)
+        for code, entry in bloc.items():
+            if code.startswith("_") or not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"  {code}  {entry.get('nom')} - {entry.get('departement')}"
+            )
+            lines.append(f"      aussi appele : {', '.join(entry.get('alias') or [])}")
+            if entry.get("note"):
+                lines.append(f"      {entry['note']}")
+        lines.append("")
+
+    if not want or want.startswith("intention"):
+        lines.append("== Ce que la question dit, et le champ que ca vaut ==")
+        for mot, entry in (lex.get("intentions") or {}).items():
+            if mot.startswith("_") or not isinstance(entry, dict):
+                continue
+            if "memeque" in entry:
+                lines.append(f"  {mot:<14} -> voir « {entry['memeque']} »")
+                continue
+            lines.append(f"  {mot:<14} timestamp_field={entry.get('timestamp_field')}")
+            lines.append(f"                 {entry.get('quoi')}")
+        lines.append("")
+
+    if not want or want.startswith("indicateur"):
+        lines.append("== Les trois durees calculees par Peripass ==")
+        for key, val in (lex.get("indicateurs") or {}).items():
+            if not key.startswith("_"):
+                lines.append(f"  {key:<24} {val}")
+        lines.append("")
+
+    if not want or want.startswith("champ"):
+        bloc = lex.get("champs_personnalises") or {}
+        lines.append("== Champs personnalises et taux de remplissage ==")
+        for note in bloc.get("_pourquoi", []):
+            lines.append("  " + note)
+        for nom, entry in bloc.items():
+            if nom.startswith("_") or not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"  cle exacte « {entry.get('cle')} »  -  {entry.get('remplissage')}"
+            )
+            if entry.get("exemples"):
+                lines.append(f"      exemples : {entry['exemples']}")
+            if entry.get("note"):
+                lines.append(f"      {entry['note']}")
+        lines.append("")
+
+    if not want or want.startswith("transporteur"):
+        lines.append("== Libelles transporteur a chercher ==")
+        for key, val in (lex.get("transporteurs") or {}).items():
+            if key.startswith("_"):
+                continue
+            lines.append(f"  {key:<12} -> {', '.join(val)}")
+        note = (lex.get("transporteurs") or {}).get("_note_vir")
+        if note:
+            lines.append("  " + note)
+        lines.append("")
+
+    if not want or want.startswith("piege"):
+        lines.append("== Pieges ==")
+        for key, val in (lex.get("pieges") or {}).items():
+            lines.append(f"  {key} : {val}")
+        lines.append("")
+
+    if not want or want.startswith("question"):
+        lines.append("== Questions courantes et outil a employer ==")
+        for item in lex.get("questions_frequentes") or []:
+            lines.append(f"  « {item['question']} »")
+            lines.append(f"      {item['outil']} : {item['appel']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Agregation : la reponse en un appel
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+@_guard
+def peripass_summary(
+    group_by: str = "site",
+    metric: str = "waitingTimeMinutes",
+    timestamp_field: str = "Arrived",
+    timestamp_start: str = "",
+    timestamp_end: str = "",
+    status: str = "",
+    transporteur: str = "",
+    site: str = "",
+    max_scan: int = 6000,
+    top: int = 30,
+) -> str:
+    """Compte et MOYENNE les temps d'attente, de rotation, de traitement. EN UN APPEL.
+
+    C'est l'outil du sujet yard : « combien de temps mes camions attendent »,
+    « quel transporteur immobilise le plus », « ca s'ameliore ou pas ». Il
+    pagine le perimetre, agrege cote serveur, et ne rend que le resultat - une
+    question qui coutait des milliers de tokens et autant d'unites de quota tient
+    en quelques centaines de caracteres.
+
+    group_by  'site' (defaut), un regroupement calcule ('mois', 'semaine',
+              'jour'), ou une colonne aplatie : status, activeProfile,
+              currentLocation, 'fields.Transporteur', 'fields.Quai Attribué',
+              'fields.Activité'.
+    metric    'waitingTimeMinutes' (defaut), 'turnaroundTimeMinutes',
+              'processingTimeMinutes', ou 'nb' pour un simple comptage.
+              La moyenne, la mediane, le p90 et le maximum sont rendus
+              ensemble : sur des temps d'attente, la moyenne seule cache la
+              queue de distribution, et c'est la queue qui fait le litige.
+    timestamp_field  LE champ de periode : Arrived (defaut), SlotStart,
+              CheckedIn, Departed. Accepte aussi un mot maison ('arrivee',
+              'creneau', 'depart'), traduit par le lexique.
+    transporteur  un nom maison ('Sennder', 'VIR', 'DSV'). Traduit en libelles
+              reels puis applique COTE CLIENT sur le champ personnalise
+              « Transporteur ». ATTENTION : ce champ n'est rempli que sur une
+              partie des lignes - le rendu dit laquelle.
+    site      'AUV', 'AMB', ou un nom maison ('Moulins', 'Amblainville').
+              Vide = les deux, et le regroupement par site les separe.
+
+    Le rendu dit toujours combien de lignes ont ete parcourues, combien portaient
+    la valeur mesuree, et si le parcours est alle jusqu'au bout. Une moyenne sur
+    un parcours incomplet n'est pas la moyenne du perimetre.
+    """
+    champ = _check_enum(
+        _intention(timestamp_field) or timestamp_field,
+        "TimestampFilterField",
+        "timestamp_field",
+    )
+    if (timestamp_start or timestamp_end) and not champ:
+        raise PeripassError(
+            "timestamp_start / timestamp_end sans timestamp_field : Peripass "
+            "ignorerait le filtre en silence et rendrait toute la base. "
+            "Precise timestamp_field parmi "
+            + ", ".join(_enum("TimestampFilterField"))
+            + ", ou un mot maison (creneau, arrivee, check-in, depart)."
+        )
+    if not (timestamp_start or timestamp_end):
+        raise PeripassError(
+            "Aucune borne de periode : le perimetre serait la base entiere, et "
+            "sur Peripass cela consomme le quota en proportion. Donne "
+            "timestamp_start, et de preference aussi timestamp_end."
+        )
+
+    query = {
+        "timestampFilterField": champ,
+        "timestampFilterStart": timestamp_start,
+        "timestampFilterEnd": timestamp_end,
+        "status": _check_enum(status, "VisitorStatus", "status"),
+    }
+    sites = _sites(site)
+    # Pas de budget de rendu : on agrege, donc on veut parcourir le perimetre.
+    rows, truncated, notes = _collect(
+        sites, "/visitors", query, max_rows=int(max_scan)
+    )
+    scanned = len(rows)
+    flat = [_flatten(r) for r in rows]
+
+    motifs: list[str] = []
+    if transporteur.strip():
+        motifs = _transporteur_motifs(transporteur)
+        avant = len(flat)
+        flat = [
+            f
+            for f in flat
+            if any(
+                _norm(m) in _norm(f.get("fields.Transporteur"))
+                for m in motifs
+                if _norm(m)
+            )
+        ]
+        renseigne = sum(
+            1 for r in [_flatten(x) for x in rows] if str(r.get("fields.Transporteur") or "").strip()
+        )
+
+    groups, total, label = _aggregate(
+        flat, group_by, metric, top, _TIMESTAMP_COLUMN.get(champ, "")
+    )
+
+    lines = [
+        "GET /visitors agrege | sites : "
+        + ", ".join(s.code for s in sites)
+        + " | filtres : "
+        + json.dumps(_clean_query(query), ensure_ascii=False),
+        f"Regroupement : {label} | mesure : {metric}",
+        "Par site : " + " | ".join(notes),
+        f"{scanned} ligne(s) parcourues",
+    ]
+    if truncated:
+        lines.append(
+            "ATTENTION : parcours INCOMPLET sur "
+            + ", ".join(truncated)
+            + ". Les chiffres ci-dessous portent sur ce qui a ete lu, ce ne sont "
+            "PAS des totaux ni les moyennes du perimetre. Resserre la periode, "
+            "releve max_scan, ou passe par le cache (peripass_sync puis "
+            "peripass_sql), qui n'a ni plafond ni quota."
+        )
+    else:
+        lines.append(
+            "Parcours COMPLET sur ce perimetre : ces chiffres sont citables, "
+            "avec leurs bornes et leur champ de periode."
+        )
+    if any("ECHEC" in n for n in notes):
+        lines.append(
+            "ATTENTION : au moins un site n'a pas repondu. Le resultat ne couvre "
+            "PAS le perimetre demande."
+        )
+    if motifs:
+        lines.append(
+            f"Filtre transporteur « {transporteur} » -> motifs "
+            f"{', '.join(motifs)}, appliques COTE CLIENT sur le champ "
+            f"personnalise « Transporteur » : {len(flat)} ligne(s) retenues sur "
+            f"{avant} parcourues, dont {renseigne} portaient un transporteur."
+        )
+        lines.append(
+            "  Le champ « Transporteur » est une SAISIE, et il n'est pas rempli "
+            "partout : ce qui n'est pas retenu n'est pas forcement d'un autre "
+            "transporteur, ca peut etre une ligne sans transporteur saisi."
+        )
+    lines.append("")
+    if not groups:
+        lines.append("(aucune ligne sur ce perimetre)")
+        return "\n".join(lines)
+    lines.append(_to_csv_text(groups))
+    lines.append("TOTAL : " + json.dumps(total, ensure_ascii=False))
+    if total.get("nb_sans_valeur"):
+        lines.append(
+            f"ATTENTION : {total['nb_sans_valeur']} ligne(s) sur {total['nb']} "
+            f"n'ont aucune valeur dans « {metric} ». Les moyennes portent donc "
+            f"sur {total.get('nb_mesure')} ligne(s) seulement - dis-le si tu "
+            "cites ce chiffre."
+        )
+    lines.append(
+        "Rappel : la moyenne du TOTAL est recalculee sur toutes les valeurs, "
+        "pas comme une moyenne des moyennes par groupe."
+    )
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Le cache local : l'historique, sans quota et sans plafond par site
+# --------------------------------------------------------------------------
+#
+# Sur Peripass, le cache n'est pas seulement un gain de temps. Le quota compte
+# les RESSOURCES lues : reposer la meme question sur trois mois d'historique
+# coute a chaque fois autant d'unites qu'il y a de lignes. Rapatrier une fois
+# puis interroger en SQL supprime ce cout.
+#
+# Ce que le cache n'est pas : l'etat courant de la cour. Un camion arrive depuis
+# la synchro n'y est pas. Pour le temps reel, ce sont les outils de liste.
+
+SYNC_SETS: dict[str, str] = {
+    "visitors": "/visitors",
+    "assets": "/assets",
+    "tasks": "/tasks",
+}
+
+
+def _iter_pages(site: Site, path: str, query: dict[str, Any], max_pages: int):
+    """Pagine un site en rendant page par page, pour ecrire au fil de l'eau."""
+    size = _page_size()
+    for page in range(max(1, int(max_pages))):
+        page_query = dict(query or {})
+        page_query["pageNumber"] = page
+        page_query["pageSize"] = size
+        batch = _rows(_request(site, path, page_query))
+        if not batch:
+            return
+        yield batch
+
+
+def _sync_hint() -> str:
+    return (
+        "Lance d'abord peripass_sync : il rapatrie une collection dans le cache "
+        "local, une fois, et peripass_sql l'interroge ensuite sans rappeler "
+        "l'API ni consommer de quota."
+    )
+
+
+def _cache_key(flat: dict[str, Any]) -> str:
+    """Cle stable d'une ligne en cache.
+
+    **Le site fait partie de la cle**, et ce n'est pas un detail : un id
+    Peripass n'est unique QUE dans son tenant. Le visiteur 4218 existe a AUV et
+    a AMB et designe deux camions differents. Sans le site dans la cle, la
+    seconde synchronisation ecraserait la premiere.
+    """
+    site = flat.get("site") or ""
+    for candidate in ("id", "displayName"):
+        value = flat.get(candidate)
+        if value not in (None, ""):
+            return f"{site}|{candidate}={value}"
+    return f"{site}|" + hashlib.sha256(
+        json.dumps(flat, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+@mcp.tool()
+@_guard
+def peripass_sync(
+    collection: str = "visitors",
+    timestamp_field: str = "Arrived",
+    timestamp_start: str = "",
+    timestamp_end: str = "",
+    site: str = "",
+    query_json: str = "{}",
+    max_rows: int = 200000,
+    max_pages: int = 2000,
+) -> str:
+    """Rapatrie une collection Peripass dans le cache local SQLite.
+
+    C'est le chemin de l'HISTORIQUE : il n'est pas soumis au garde-fou
+    PERIPASS_MAX_PAGES, qui plafonne le direct a 6 000 lignes PAR SITE. Une fois
+    la collection en cache, peripass_sql repond instantanement, autant de fois
+    qu'on veut, sans reconsommer le quota Peripass.
+
+    ECRIT SUR LE DISQUE (un fichier SQLite sous la racine locale, hors de tout
+    dossier synchronise). A lancer sur demande.
+
+    collection : visitors, assets, tasks.
+    timestamp_field + timestamp_start / timestamp_end : les bornes, appliquees
+        COTE SERVEUR. Les poser reduit fortement le trajet ET le quota consomme.
+        timestamp_field accepte un mot maison ('arrivee', 'creneau').
+
+    Chaque ligne porte sa colonne `site`, et la cle de deduplication inclut le
+    site : un id Peripass n'est unique que dans son tenant.
+    """
+    key = _norm(collection).replace(" ", "_")
+    path = SYNC_SETS.get(key)
+    if path is None:
+        raise PeripassError(
+            f"Collection inconnue : {collection}. Valeurs : "
+            + ", ".join(sorted(SYNC_SETS))
+        )
+    try:
+        query = json.loads(query_json or "{}")
+    except ValueError as exc:
+        raise PeripassError(f"query_json n'est pas du JSON valide : {exc}") from exc
+    if not isinstance(query, dict):
+        raise PeripassError("query_json doit etre un objet JSON.")
+
+    if timestamp_start or timestamp_end:
+        champ = _check_enum(
+            _intention(timestamp_field) or timestamp_field,
+            "TimestampFilterField",
+            "timestamp_field",
+        )
+        if not champ:
+            raise PeripassError(
+                "timestamp_start / timestamp_end sans timestamp_field : le "
+                "filtre serait ignore en silence et la base entiere rapatriee."
+            )
+        query["timestampFilterField"] = champ
+        if timestamp_start:
+            query["timestampFilterStart"] = timestamp_start
+        if timestamp_end:
+            query["timestampFilterEnd"] = timestamp_end
+
+    table = cache.table_name(key)
+    started = dt.datetime.now(dt.timezone.utc)
+    sites = _sites(site)
+    conn = cache.open_rw(_cache_path())
+    lignes: list[str] = []
+    try:
+        for target in sites:
+            written = 0
+            pages = 0
+            stopped = ""
+            try:
+                for batch in _iter_pages(target, path, query, int(max_pages)):
+                    flat = [{"site": target.code, **_flatten(r)} for r in batch]
+                    written += cache.upsert(
+                        conn,
+                        table,
+                        flat,
+                        _cache_key,
+                        NUMERIC_COLUMNS,
+                        ("site", "status", "visitorTimeStampArrived"),
+                    )
+                    pages += 1
+                    if written >= int(max_rows):
+                        stopped = f"plafond max_rows={max_rows}"
+                        break
+                else:
+                    if pages >= int(max_pages):
+                        stopped = f"plafond max_pages={max_pages}"
+            except (ConfigError, PeripassError) as exc:
+                lignes.append(f"[{target.code}] ECHEC : {exc}")
+                continue
+            cache.meta_set(
+                conn,
+                f"last_sync:{table}:{target.code}",
+                started.isoformat(timespec="seconds"),
+            )
+            cache.meta_set(
+                conn,
+                f"scope:{table}:{target.code}",
+                json.dumps(_clean_query(query), ensure_ascii=False) or "(sans filtre)",
+            )
+            note = f"[{target.code}] {written} ligne(s) en {pages} appel(s)"
+            if stopped:
+                note += f"  [ARRET sur {stopped} : il restait des lignes]"
+            lignes.append(note)
+        conn.commit()
+        total = 0
+        if cache.columns(conn, table):
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM {cache.quote(table)}"
+            ).fetchone()[0]
+    finally:
+        conn.close()
+
+    out = [f"Synchronisation [{table}] terminee.", ""]
+    out.extend("  " + line for line in lignes)
+    out.append("")
+    out.append(f"Cache : {_cache_path()}")
+    out.append(f"Total en cache pour cette table : {total} ligne(s).")
+    if any("ARRET" in line or "ECHEC" in line for line in lignes):
+        out.append(
+            "ATTENTION : au moins un site n'a pas ete rapatrie en entier. Le "
+            "cache ne couvre PAS le perimetre demande : resserre les bornes et "
+            "relance."
+        )
+    out.append("")
+    out.append("Interroge maintenant avec peripass_sql, ou peripass_tables.")
+    return "\n".join(out)
+
+
+@mcp.tool()
+@_guard
+def peripass_tables() -> str:
+    """Ce que le cache local contient : tables, volumes, synchro et perimetre par site."""
+    try:
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise PeripassError(str(exc)) from exc
+    try:
+        names = cache.tables(conn)
+        if not names:
+            return "Cache vide. " + _sync_hint()
+        lines = [f"Cache local : {_cache_path()}", ""]
+        for table in names:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM {cache.quote(table)}"
+            ).fetchone()[0]
+            lines.append(
+                f"[{table}] {total} ligne(s), {len(cache.columns(conn, table))} colonne(s)"
+            )
+            if "site" in cache.columns(conn, table):
+                for row in conn.execute(
+                    f"SELECT site, COUNT(*) FROM {cache.quote(table)} GROUP BY 1"
+                ):
+                    lines.append(f"    site {row[0]:<6} {row[1]} ligne(s)")
+            for row in conn.execute(
+                "SELECT key, value FROM _meta WHERE key LIKE ?", (f"last_sync:{table}:%",)
+            ):
+                lines.append(f"    synchro {row['key'].split(':')[-1]:<6} {row['value']}")
+            for row in conn.execute(
+                "SELECT key, value FROM _meta WHERE key LIKE ?", (f"scope:{table}:%",)
+            ):
+                lines.append(f"    perimetre {row['key'].split(':')[-1]:<4} {row['value']}")
+        lines.append("")
+        lines.append(
+            "Le cache n'est pas l'etat courant de la cour : un camion arrive "
+            "depuis la synchro n'y est pas. Pour le temps reel, utilise les "
+            "outils de liste."
+        )
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def peripass_columns(table: str = "visitors") -> str:
+    """Colonnes d'une table du cache, avec leur taux de remplissage.
+
+    A lire avant d'ecrire du SQL. Le taux de remplissage n'est pas un detail :
+    moyenner un temps d'attente present sur 40 % des lignes rend un chiffre qui
+    a l'air d'une moyenne de site.
+    """
+    try:
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise PeripassError(str(exc)) from exc
+    try:
+        name = cache.table_name(table)
+        cols = cache.columns(conn, name)
+        if not cols:
+            return f"Table '{name}' absente du cache. " + _sync_hint()
+        total = conn.execute(f"SELECT COUNT(*) FROM {cache.quote(name)}").fetchone()[0]
+        lines = [f"[{name}] {total} ligne(s), {len(cols)} colonne(s)", ""]
+        if not total:
+            lines.extend("  " + c for c in cols)
+            return "\n".join(lines)
+        expr = ", ".join(
+            f"SUM(CASE WHEN {cache.quote(c)} IS NULL OR {cache.quote(c)} = '' "
+            f"THEN 0 ELSE 1 END)"
+            for c in cols
+        )
+        counts = conn.execute(f"SELECT {expr} FROM {cache.quote(name)}").fetchone()
+        for col, filled in zip(cols, counts):
+            kind = "num" if col in NUMERIC_COLUMNS else "txt"
+            lines.append(f"  {col:<46} {kind}  {100 * (filled or 0) / total:5.1f}% rempli")
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def peripass_sql(sql: str, max_rows: int = 100) -> str:
+    """Interroge le cache local en SQL (SQLite, lecture seule).
+
+    Pour ce que l'API ne sait pas faire : un historique long, un croisement,
+    une distribution de temps d'attente par quai sur trois mois. Instantane, et
+    sans consommer le quota Peripass.
+
+    Les colonnes portent le nom aplati de l'API, avec des points et parfois des
+    accents ('fields.Numéro RDV') : il faut donc les guillemeter.
+    peripass_columns les liste.
+
+    Exemple :
+      SELECT site, "fields.Transporteur" t, COUNT(*) nb,
+             ROUND(AVG(waitingTimeMinutes),1) attente
+      FROM visitors WHERE waitingTimeMinutes IS NOT NULL
+      GROUP BY 1,2 ORDER BY attente DESC
+    """
+    try:
+        clean = cache.guard_sql(sql)
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise PeripassError(str(exc)) from exc
+    try:
+        rows, more = cache.select(conn, clean, limit=int(max_rows))
+        if not rows:
+            return "(aucune ligne)\n\nRequete : " + clean
+        lines = [f"{len(rows)} ligne(s) rendues."]
+        if more:
+            reel = cache.count_of(conn, clean)
+            lines.append(
+                f"ATTENTION : la requete rend {reel} ligne(s) au total, "
+                f"{max_rows} sont affichees. Le compte affiche n'est PAS le "
+                "total - c'est celui-ci qui l'est. Releve max_rows, ou agrege "
+                "dans la requete."
+            )
+        lines.append("")
+        lines.append(cache.to_csv_text(rows))
+        return "\n".join(lines)
+    except cache.CacheError as exc:
+        raise PeripassError(str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def peripass_export_sql(sql: str, filename: str = "", max_rows: int = 500000) -> str:
+    """Exporte en CSV le resultat d'une requete sur le cache. SUR DEMANDE.
+
+    C'est l'export sans plafond de pagination et sans quota : il lit le cache,
+    pas l'API. A n'appeler que si l'utilisateur a demande un fichier.
+    """
+    try:
+        clean = cache.guard_sql(sql)
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise PeripassError(str(exc)) from exc
+    try:
+        cur = conn.execute(clean)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchmany(int(max_rows))
+        reste = cur.fetchone() is not None
+    except Exception as exc:
+        raise PeripassError(f"SQL refuse par SQLite : {exc}") from exc
+    finally:
+        conn.close()
+
+    target_dir = _export_dir()
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PeripassError(
+            f"Dossier d'export inutilisable ({target_dir}) : {exc}"
+        ) from exc
+    name = (filename or "").strip() or (
+        "peripass_sql_" + dt.datetime.now().strftime("%Y-%m-%d_%H%M%S") + ".csv"
+    )
+    if not name.lower().endswith(".csv"):
+        name += ".csv"
+    target = target_dir / pathlib.Path(name).name
+    try:
+        with target.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(cols)
+            writer.writerows(rows)
+    except OSError as exc:
+        raise PeripassError(f"Ecriture impossible dans {target} : {exc}") from exc
+
+    out = [f"Export termine : {target}", f"{len(rows)} ligne(s), {len(cols)} colonne(s)."]
+    if reste:
+        out.append(
+            f"ATTENTION : la requete rendait PLUS de {max_rows} lignes, le "
+            "fichier est tronque. Releve max_rows, ou resserre la requete."
+        )
+    else:
+        out.append("Resultat complet : la requete ne rendait pas plus de lignes.")
+    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------

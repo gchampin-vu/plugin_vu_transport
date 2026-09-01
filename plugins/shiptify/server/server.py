@@ -25,6 +25,7 @@ Configuration : un fichier .env, hors du vault. Voir README.md.
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import datetime as dt
 import functools
@@ -36,10 +37,15 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
+import time
+import unicodedata
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+import vu_cache as cache
 
 DEFAULT_BASE_URL = "https://api.shiptify.com"
 DEFAULT_AUTH_PREFIX = "Api-Key"
@@ -55,6 +61,31 @@ DEFAULT_MAX_PAGES = 60
 
 # Plafond de caracteres rendus dans la conversation par un outil de liste.
 RENDER_MAX_CHARS = 24_000
+
+# Nombre de tentatives sur une erreur qui a des chances de passer au coup
+# suivant. Sans cela, un 429 en milieu de pagination perd les 40 pages deja
+# ramenees, et l'utilisateur relance tout depuis zero - ce qui consomme le
+# quota une seconde fois.
+RETRY_ATTEMPTS = 3
+RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+# Colonnes numeriques du cache. Sans ce typage, un SUM() en SQL additionne des
+# chaines et rend n'importe quoi.
+NUMERIC_COLUMNS = {
+    "total_weight",
+    "total_volume",
+    "total_linear_meters",
+    "total_taxable_weight",
+    "cost",
+    "price",
+    "quantity",
+    "nb_packages",
+}
+
+# Colonnes indexees a la synchronisation : celles sur lesquelles on filtre.
+INDEX_COLUMNS = ("date", "created_at", "carrier.name", "address_dest.country", "status")
+
+LEXIQUE_FILE = pathlib.Path(__file__).resolve().parent / "lexique.json"
 
 # Dossiers synchronises : un secret n'y vit pas.
 SYNCED_MARKERS = ("/onedrive", "cafom", "sharepoint", "dropbox", "google drive")
@@ -161,14 +192,19 @@ def _candidate_env_files() -> list[pathlib.Path]:
     explicit = (os.environ.get("SHIPTIFY_ENV_FILE") or "").strip()
     if explicit:
         out.append(pathlib.Path(explicit))
-    # Mode plugin d'abord : ce dossier vit sous ~/.claude/plugins/data/, hors
-    # de la zone que les interpreteurs empaquetes virtualisent. C'est donc le
-    # seul emplacement de fichier fiable quand le plugin lance `python`.
+    # La racine locale de la convention d'equipe : ~/.shiptify-mcp. Le profil
+    # utilisateur existe des deux cotes, n'est pas virtualise par un Python
+    # empaquete, et ne depend pas de l'identifiant d'installation du plugin.
+    out.append(_local_root() / ".env")
+    # Les trois emplacements suivants sont des HERITAGES, gardes en LECTURE pour
+    # ne pas perdre la cle d'un poste configure avant la convention. Plus rien
+    # n'y est ecrit : le magasin de _key_store_path est la racine locale.
     plugin_data = (os.environ.get("CLAUDE_PLUGIN_DATA") or "").strip()
     if plugin_data:
         out.append(pathlib.Path(plugin_data) / ".env")
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    out.append(pathlib.Path(base) / "shiptify-mcp" / ".env")
+    legacy = os.environ.get("LOCALAPPDATA")
+    if legacy:
+        out.append(pathlib.Path(legacy) / "shiptify-mcp" / ".env")
     out.append(pathlib.Path.home() / ".shiptify" / ".env")
     # Voisin du script : refuse si le vault est synchronise, mais on le regarde
     # quand meme pour pouvoir le dire clairement plutot que rester muet.
@@ -355,11 +391,26 @@ def _engine_roots() -> list[pathlib.Path]:
 
 
 def _shared_env_candidates() -> list[pathlib.Path]:
-    """Emplacements du fichier d'equipe essayes, dans l'ordre."""
+    """Emplacements du fichier d'equipe essayes, dans l'ordre.
+
+    **Un chemin explicite est EXCLUSIF.** Avant le 2026-08-28, la variable
+    d'environnement etait ajoutee en tete puis la recherche continuait sous le
+    profil : pointer un fichier precis ne desactivait donc pas le fichier
+    d'equipe reel, il le mettait juste en second. Consequence mesuree, et elle
+    n'est pas theorique : la suite de controles hors-ligne pointe un fichier
+    inexistant pour simuler un poste sans configuration d'equipe, et elle
+    tournait en fait avec les vraies cles - sept controles echouaient sur la
+    machine de celui qui developpe, c'est-a-dire la seule ou la suite est
+    lancee. Un garde-fou qui echoue toujours finit par etre ignore.
+
+    Le meme piege vaut en exploitation : qui pointe un fichier de recette
+    attend ce fichier, pas un repli silencieux sur la configuration de
+    production.
+    """
     out: list[pathlib.Path] = []
     explicit = (os.environ.get("SHIPTIFY_SHARED_ENV") or "").strip()
     if explicit:
-        out.append(pathlib.Path(explicit))
+        return [pathlib.Path(explicit)]
     for root in _engine_roots():
         out.append(root.joinpath(*SHARED_SUBPATH, SHARED_FILE_NAME))
     return out
@@ -532,26 +583,49 @@ def _max_pages() -> int:
         return DEFAULT_MAX_PAGES
 
 
-def _export_dir() -> pathlib.Path:
-    """Ou atterrissent les CSV. Quatre cas, dans cet ordre.
+def _local_root() -> pathlib.Path:
+    """Racine locale de l'outil : cache SQLite et exports.
 
-    Le serveur tourne dans deux contextes : installe dans le vault de
-    Guillaume, ou installe comme plugin chez un collegue qui n'a pas de vault.
-    Un chemin relatif au code serait juste dans le premier cas et absurde dans
-    le second.
+    **Sous le profil utilisateur, pas sous %LOCALAPPDATA% ni sous le dossier de
+    donnees du plugin**, et ce n'est pas un detail de gout.
+
+    Deux raisons, mesurees. Un interpreteur Windows empaquete (Microsoft Store,
+    Python Manager) donne a ses processus enfants une vue VIRTUALISEE de
+    %LOCALAPPDATA% : le serveur lance par le plugin et le meme serveur lance en
+    ligne de commande ne verraient pas le meme cache, sans aucune erreur. Et le
+    dossier de donnees du plugin depend de l'identifiant d'installation : ce
+    poste en porte deja deux (shiptify-inline et shiptify-vu-transport), donc un
+    cache construit sous l'un serait invisible sous l'autre.
+
+    Le profil, lui, n'est ni virtualise ni fonction de l'installation. C'est le
+    choix qu'avait deja fait le connecteur Yooz.
+    """
+    # os.environ et NON _env : cette fonction est appelee pendant le chargement
+    # du fichier .env, et passer par _env - qui declenche ce chargement - ferait
+    # un aller-retour. Un chemin local n'a de toute facon pas sa place dans la
+    # configuration d'equipe : il n'existe pas sur les autres postes.
+    raw = (os.environ.get("SHIPTIFY_HOME") or "").strip()
+    if raw:
+        return pathlib.Path(raw)
+    return pathlib.Path.home() / ".shiptify-mcp"
+
+
+def _cache_path() -> pathlib.Path:
+    raw = _env("SHIPTIFY_CACHE_DB")
+    return pathlib.Path(raw) if raw else _local_root() / "shiptify_cache.sqlite"
+
+
+def _export_dir() -> pathlib.Path:
+    """Ou atterrissent les CSV.
+
+    Le reglage explicite gagne ; sinon la racine locale, qui est la meme quel
+    que soit le mode de lancement. L'ancien emplacement (dossier de donnees du
+    plugin) n'est plus utilise en ecriture : voir _local_root.
     """
     raw = _env("SHIPTIFY_EXPORT_DIR")
     if raw:
         return pathlib.Path(raw)
-    # Mode plugin : dossier de donnees du plugin, qui survit aux mises a jour.
-    plugin_data = (os.environ.get("CLAUDE_PLUGIN_DATA") or "").strip()
-    if plugin_data:
-        return pathlib.Path(plugin_data) / "exports"
-    # Installe dans le vault : Assets/shiptify, avec les autres binaires.
-    assets = pathlib.Path(__file__).resolve().parents[2] / "Assets"
-    if assets.is_dir():
-        return assets / "shiptify"
-    return pathlib.Path.cwd() / "shiptify-exports"
+    return _local_root() / "exports"
 
 
 def _key_source() -> str:
@@ -591,11 +665,10 @@ def _key_store_path() -> pathlib.Path:
     explicit = (os.environ.get("SHIPTIFY_ENV_FILE") or "").strip()
     if explicit:
         return pathlib.Path(explicit)
-    plugin_data = (os.environ.get("CLAUDE_PLUGIN_DATA") or "").strip()
-    if plugin_data:
-        return pathlib.Path(plugin_data) / ".env"
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return pathlib.Path(base) / "shiptify-mcp" / ".env"
+    # Un seul emplacement d'ecriture, le meme sur les deux systemes, et le meme
+    # que le serveur relit en premier. Les anciens emplacements restent lus par
+    # _candidate_env_files, ils ne sont plus ecrits.
+    return _local_root() / ".env"
 
 
 def _stored_key() -> str:
@@ -754,18 +827,67 @@ def _page_limit_for(path: str) -> int:
     return PAGE_LIMIT_VISITS if path.rstrip("/") == "/visits" else PAGE_LIMIT
 
 
+_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def _client() -> httpx.Client:
+    """Le client HTTP du processus, partage et garde ouvert.
+
+    Un `httpx.get` par appel rouvre la connexion TLS a chaque page. Le gain
+    mesure sur cette API est faible - elle repond en 0,15 s par page - mais il
+    n'est jamais negatif, et il devient reel des qu'on enchaine des dizaines de
+    pages ou qu'on interroge en parallele. httpx.Client est sur en usage
+    concurrent, c'est ce qui permet le fan-out de _request_many.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        with _CLIENT_LOCK:
+            if _CLIENT is None:
+                _CLIENT = httpx.Client(
+                    timeout=_timeout(),
+                    follow_redirects=True,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=8, max_connections=16
+                    ),
+                )
+    return _CLIENT
+
+
+def _retry_after(resp: httpx.Response, attempt: int) -> float:
+    """Combien attendre avant de rejouer. L'en-tete du serveur fait foi."""
+    raw = (resp.headers.get("Retry-After") or "").strip()
+    if raw:
+        try:
+            return max(0.0, min(30.0, float(raw)))
+        except ValueError:
+            pass
+    return min(8.0, 0.5 * (2 ** attempt))
+
+
 def _request(path: str, query: dict[str, Any] | None = None) -> Any:
     url = _base_url() + path
-    try:
-        resp = httpx.get(
-            url,
-            headers=_headers(),
-            params=_clean_query(query),
-            timeout=_timeout(),
-            follow_redirects=True,
-        )
-    except httpx.HTTPError as exc:
-        raise ShiptifyError(f"Appel {path} impossible : {exc}") from exc
+    headers = _headers()
+    params = _clean_query(query)
+    resp: httpx.Response | None = None
+    last_error = ""
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            resp = _client().get(url, headers=headers, params=params)
+        except httpx.HTTPError as exc:
+            # Coupure reseau, DNS, TLS : ca vaut une seconde tentative, pas
+            # trois. Au-dela c'est une panne, pas un alea.
+            last_error = str(exc)
+            if attempt >= 1:
+                raise ShiptifyError(f"Appel {path} impossible : {exc}") from exc
+            time.sleep(0.5)
+            continue
+        if resp.status_code in RETRY_STATUSES and attempt < RETRY_ATTEMPTS - 1:
+            time.sleep(_retry_after(resp, attempt))
+            continue
+        break
+    if resp is None:
+        raise ShiptifyError(f"Appel {path} impossible : {last_error}")
 
     if resp.status_code == 401:
         raise ShiptifyError(
@@ -784,8 +906,10 @@ def _request(path: str, query: dict[str, Any] | None = None) -> Any:
         raise ShiptifyError(f"HTTP 404 sur {path} : ressource inexistante.")
     if resp.status_code == 429:
         raise ShiptifyError(
-            "HTTP 429 : quota d'appels atteint. Reduis max_rows, ou resserre "
-            "le perimetre de dates."
+            f"HTTP 429 : quota d'appels atteint, et il l'etait encore apres "
+            f"{RETRY_ATTEMPTS} tentatives espacees. Reduis max_rows, resserre le "
+            "perimetre de dates, ou passe par le cache (shiptify_sync une fois, "
+            "puis shiptify_sql autant de fois que voulu sans rappeler l'API)."
         )
     if resp.status_code >= 400:
         body = (resp.text or "")[:600]
@@ -819,33 +943,94 @@ def _paginate(
     query: dict[str, Any] | None = None,
     max_rows: int = 1000,
     page_limit: int = PAGE_LIMIT,
-) -> tuple[list[dict[str, Any]], bool]:
-    """Boucle offset/limit jusqu'a page vide. Rend (lignes, tronque).
+    render_fields: str = "",
+    render_budget: int = 0,
+) -> tuple[list[dict[str, Any]], str]:
+    """Boucle offset/limit jusqu'a page vide. Rend (lignes, raison_d_arret).
+
+    La raison est une chaine vide quand la collection a ete lue en entier, et
+    sinon dit POURQUOI on s'est arrete. Elle vaut mieux qu'un booleen : les
+    trois arrets n'appellent pas la meme correction, et le rendu doit pouvoir le
+    dire a l'utilisateur.
 
     L'API ne renvoie aucun total : la seule fin de collection fiable est une
     page vide. C'est la logique du script Power Query d'origine, et elle est
     conservee volontairement. S'arreter sur une page partielle ferait gagner un
     appel, mais sous-compterait en silence si l'API filtre apres avoir applique
     la limite - exactement le genre de chiffre faux qu'on ne veut pas citer.
+
+    Deux corrections par rapport a la version d'avant le 2026-08-28.
+
+    1. **La troncature n'est plus annoncee a tort.** L'ancien test `len(out) >=
+       max_rows` declarait tronque un resultat qui faisait EXACTEMENT max_rows
+       lignes et etait complet. Comme un rendu tronque n'est pas citable, un
+       chiffre juste devenait inutilisable. On lit donc une ligne de plus que
+       demande, et on ne parle de troncature que si elle existe.
+    2. **On arrete de paginer ce qui ne sera pas affiche.** Le rendu est plafonne
+       en caracteres, mais la pagination l'ignorait : sur 300 lignes demandees,
+       la moitie etait ramenee puis jetee. render_budget ferme la boucle des que
+       la projection depasse ce qui tiendra a l'ecran.
     """
     out: list[dict[str, Any]] = []
     offset = 0
     pages = 0
     cap = _max_pages()
+    used = 0
     while True:
         page_query = dict(query or {})
         page_query["limit"] = page_limit
         page_query["offset"] = offset
         batch = _rows(_request(path, page_query))
-        out.extend(batch)
         pages += 1
         if not batch:
-            return out, False
-        if len(out) >= max_rows:
-            return out[:max_rows], True
+            # Page vide : la collection est finie, quoi qu'il arrive ensuite.
+            return out, ""
+        out.extend(batch)
+        if len(out) > max_rows:
+            return out[:max_rows], "max_rows"
+        if render_budget and len(batch) >= page_limit:
+            # Le budget n'arrete la lecture que sur une page PLEINE. Une page
+            # partielle veut dire qu'on touche la fin de la collection : payer
+            # un appel de plus pour le confirmer vaut mieux qu'annoncer une
+            # lecture incomplete alors qu'il ne restait rien - un rendu dit
+            # tronque n'est pas citable, et le chiffre juste devient inutile.
+            used += len(
+                _to_csv_text(_select([_flatten(r) for r in batch], render_fields))
+            )
+            if used >= render_budget:
+                return out, "budget"
         if pages >= cap:
-            return out, True
+            return out, "max_pages"
         offset += page_limit
+
+
+def _request_many(calls: list[tuple[str, dict[str, Any]]]) -> list[Any]:
+    """Joue plusieurs GET independants de front. Rend les charges dans l'ordre.
+
+    Sert aux outils qui composent une reponse a partir de sous-ressources
+    (un envoi et ses points de suivi, ses contenus, ses pieces jointes) : les
+    enchainer en serie multipliait la latence par le nombre d'inclusions.
+    Une erreur sur un appel est rendue comme valeur, pas levee : les autres
+    sous-ressources restent utiles.
+    """
+    if not calls:
+        return []
+    if len(calls) == 1:
+        path, query = calls[0]
+        try:
+            return [_request(path, query)]
+        except (ConfigError, ShiptifyError) as exc:
+            return [f"ERREUR : {exc}"]
+
+    def one(item: tuple[str, dict[str, Any]]) -> Any:
+        path, query = item
+        try:
+            return _request(path, query)
+        except (ConfigError, ShiptifyError) as exc:
+            return f"ERREUR : {exc}"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(calls))) as pool:
+        return list(pool.map(one, calls))
 
 
 # --------------------------------------------------------------------------
@@ -905,23 +1090,56 @@ def _to_csv_text(rows: list[dict[str, Any]], delimiter: str = ";") -> str:
     return buf.getvalue()
 
 
+_STOP_MESSAGES = {
+    "max_rows": (
+        "ATTENTION : resultat tronque, le plafond max_rows a ete atteint. Le "
+        "compte ci-dessus n'est PAS un total : ne le cite pas comme un volume. "
+        "Pour un COMPTE juste sur un large perimetre, utilise shiptify_summary, "
+        "qui agrege cote serveur et ne ramene que le resultat."
+    ),
+    "max_pages": (
+        "ATTENTION : resultat tronque, le garde-fou SHIPTIFY_MAX_PAGES a ete "
+        "atteint. Le compte ci-dessus n'est PAS un total. Resserre le perimetre "
+        "de dates, ou passe par shiptify_summary pour un compte, ou par le cache "
+        "(shiptify_sync) pour un historique large."
+    ),
+    "budget": (
+        "Lecture arretee sur le budget d'affichage : les lignes suivantes "
+        "n'auraient pas ete affichees de toute facon, elles n'ont donc pas ete "
+        "demandees a l'API. Le compte ci-dessus n'est PAS un total. Pour "
+        "compter, utilise shiptify_summary ; pour voir plus de lignes, resserre "
+        "les filtres ou la projection fields=..."
+    ),
+}
+
+
 def _render_table(
     rows: list[dict[str, Any]],
     header: str,
-    truncated: bool,
+    truncated: Any = "",
     fields: str = "",
     max_chars: int = RENDER_MAX_CHARS,
 ) -> str:
-    """Rend une collection en CSV point-virgule, borne en taille."""
+    """Rend une collection en CSV point-virgule, borne en taille.
+
+    `truncated` porte la raison d'arret rendue par _paginate : chaine vide si la
+    collection a ete lue en entier. Un booleen reste accepte pour les appels qui
+    n'ont pas de pagination derriere eux.
+    """
     flat = _select([_flatten(r) for r in rows], fields)
-    lines = [header, f"{len(rows)} ligne(s) rendues."]
+    lines = [header, f"{len(rows)} ligne(s) ramenees."]
     if truncated:
         lines.append(
-            "ATTENTION : resultat tronque (max_rows ou garde-fou de pagination "
-            "atteint). Le compte ci-dessus n'est PAS un total : ne le cite pas "
-            "comme un volume. Resserre les filtres jusqu'a ce que le "
-            "perimetre tienne. Un export CSV ne se fait que si "
-            "l'utilisateur en a demande un."
+            _STOP_MESSAGES.get(
+                str(truncated),
+                "ATTENTION : resultat tronque. Le compte ci-dessus n'est PAS un "
+                "total : ne le cite pas comme un volume.",
+            )
+        )
+    else:
+        lines.append(
+            "Lecture complete sur ce perimetre : la collection a ete parcourue "
+            "jusqu'a la derniere page. Ce compte est citable, avec ses filtres."
         )
     if not flat:
         lines.append("(aucune ligne)")
@@ -938,9 +1156,10 @@ def _render_table(
             size += len(line) + 1
         body = "\n".join(kept)
         lines.append(
-            f"Rendu limite a {max(0, len(kept) - 1)} ligne(s) pour ne pas "
-            "saturer la conversation. Restreins avec fields=... ou resserre "
-            "les filtres. N'exporte en CSV que si l'utilisateur l'a demande."
+            f"Rendu limite a {max(0, len(kept) - 1)} ligne(s) sur "
+            f"{len(flat)} ramenees, pour ne pas saturer la conversation. "
+            "Restreins avec fields=... ou resserre les filtres. N'exporte en CSV "
+            "que si l'utilisateur l'a demande."
         )
     lines.append("")
     lines.append(body)
@@ -970,6 +1189,299 @@ def _guard(fn):
             return f"ERREUR : {exc}"
 
     return wrapper
+
+
+# --------------------------------------------------------------------------
+# Le lexique metier : ce qui fait qu'une question en francais trouve sa colonne
+# --------------------------------------------------------------------------
+#
+# Ce que ce bloc resout, et pourquoi il est dans le serveur plutot que dans la
+# skill. Une skill est lue une fois, en debut de session, et le modele ne la
+# relit pas avant chaque appel : le vocabulaire maison y est une intention, pas
+# une garantie. Ici, c'est le serveur qui traduit, et il rend compte de ce qu'il
+# a traduit dans l'entete de chaque reponse.
+#
+# LA confusion qu'il existe pour eviter : Shiptify porte le middle mile. Son
+# referentiel de transporteurs est le panel d'affretement, pas le portefeuille
+# de livraison. VIR n'y est pas comme transporteur - il y est comme DESTINATION,
+# sous trois libelles differents (VIR, JP Home, JPH). Un filtre sur la seule
+# chaine « VIR » dans carrier.name rend zero ligne, et zero ligne se lit comme
+# « il n'y en a pas ».
+
+_LEXIQUE: dict[str, Any] | None = None
+_LEXIQUE_ERROR: str = ""
+
+
+def _norm(text: Any) -> str:
+    """Forme comparable d'un libelle : sans accent, sans casse, sans ponctuation.
+
+    « Prevote I Meru », « prévoté » et « PREVOTE » doivent se rencontrer.
+    """
+    raw = unicodedata.normalize("NFKD", str(text or ""))
+    raw = "".join(c for c in raw if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
+
+
+def _lexique() -> dict[str, Any]:
+    """Le lexique livre avec le connecteur. Ne leve jamais.
+
+    Un lexique absent ou mal forme ne doit pas empecher le connecteur de
+    repondre : il degrade la comprehension, il ne casse pas la lecture.
+    """
+    global _LEXIQUE, _LEXIQUE_ERROR
+    if _LEXIQUE is None:
+        try:
+            _LEXIQUE = json.loads(LEXIQUE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _LEXIQUE_ERROR = f"{LEXIQUE_FILE} illisible : {exc}"
+            _LEXIQUE = {}
+    return _LEXIQUE
+
+
+def _alias(term: str) -> dict[str, Any] | None:
+    """L'entree de lexique d'un terme, en suivant les renvois 'memeque'."""
+    table = _lexique().get("alias") or {}
+    key = _norm(term)
+    index = {_norm(k): v for k, v in table.items()}
+    entry = index.get(key)
+    for _ in range(4):  # garde-fou contre un renvoi circulaire
+        if not isinstance(entry, dict) or "memeque" not in entry:
+            break
+        entry = index.get(_norm(entry["memeque"]))
+    return entry if isinstance(entry, dict) else None
+
+
+_CARRIERS: list[dict[str, Any]] | None = None
+
+
+def _carriers_index() -> list[dict[str, Any]]:
+    """Le referentiel des transporteurs actifs, lu une fois par processus.
+
+    119 lignes au releve du 2026-08-28, un appel de 0,28 s : le garder en
+    memoire evite de le redemander a chaque resolution.
+    """
+    global _CARRIERS
+    if _CARRIERS is None:
+        _CARRIERS = _rows(_request("/carriers/active"))
+    return _CARRIERS
+
+
+def _resolve(term: str) -> dict[str, Any]:
+    """Traduit un terme maison en champ + motifs de recherche.
+
+    Rend toujours un dictionnaire, meme quand rien n'est trouve : c'est le
+    connecteur qui doit dire « ce nom n'est pas ici, et voila ou il est »,
+    plutot que de laisser sortir un tableau vide.
+    """
+    term = (term or "").strip()
+    out: dict[str, Any] = {
+        "terme": term,
+        "canonique": term,
+        "champ": "carrier.name",
+        "motifs": [term] if term else [],
+        "notes": [],
+        "carriers": [],
+        "connu_du_lexique": False,
+    }
+    if not term:
+        return out
+
+    entry = _alias(term)
+    if entry:
+        out["connu_du_lexique"] = True
+        out["canonique"] = entry.get("canonique") or term
+        out["champ"] = entry.get("champ") or "carrier.name"
+        out["motifs"] = list(entry.get("motifs") or [term])
+        for key in ("note", "attention", "source"):
+            if entry.get(key):
+                out["notes"].append(f"{key} : {entry[key]}")
+
+    # Confrontation au referentiel vivant : le lexique dit ce qu'on cherche,
+    # l'API dit ce qui existe reellement aujourd'hui.
+    if out["champ"] == "carrier.name":
+        motifs = [_norm(m) for m in out["motifs"] if _norm(m)]
+        for row in _carriers_index():
+            name = _norm(row.get("name"))
+            if any(m in name for m in motifs):
+                out["carriers"].append(
+                    {"id": row.get("id"), "name": row.get("name"), "code": row.get("code")}
+                )
+        if len(out["carriers"]) > 1:
+            out["notes"].append(
+                f"{len(out['carriers'])} entites Shiptify portent ce nom : "
+                + ", ".join(f"{c['name']} (id {c['id']})" for c in out["carriers"])
+                + ". Un filtre sur un seul identifiant sous-compte."
+            )
+        if not out["carriers"]:
+            portefeuille = (
+                (_lexique().get("portefeuille_dernier_kilometre") or {}).get("noms") or []
+            )
+            connu = any(_norm(term) in _norm(n) or _norm(n) in _norm(term)
+                        for n in portefeuille if _norm(n))
+            if connu:
+                out["notes"].append(
+                    f"« {term} » est un transporteur du PORTEFEUILLE de livraison, mais "
+                    "il n'apparait pas dans le referentiel des transporteurs Shiptify, "
+                    "qui ne porte que le panel d'affretement middle mile. Ce n'est pas "
+                    "une absence de flux : c'est la mauvaise source. Le cote facture "
+                    "est dans Yooz (connecteur yooz-factures), le contrat et la "
+                    "performance dans 02_TRANSPORTEURS/ de la bibliotheque d'equipe. "
+                    "Verifie aussi address_dest.name : plusieurs prestataires du "
+                    "dernier kilometre y apparaissent comme destination."
+                )
+            else:
+                out["notes"].append(
+                    f"Aucun transporteur actif Shiptify ne correspond a « {term} ». "
+                    "Appelle shiptify_list_carriers pour voir les libelles reels, ou "
+                    "cherche sur address_dest.name si c'est une destination."
+                )
+    return out
+
+
+def _row_matches(flat: dict[str, Any], champ: str, motifs: list[str]) -> bool:
+    """Le filtre cote client : le motif est-il dans la valeur du champ ?"""
+    if not motifs:
+        return True
+    value = _norm(flat.get(champ))
+    if not value:
+        return False
+    return any(_norm(m) in value for m in motifs if _norm(m))
+
+
+def _apply_client_filter(
+    rows: list[dict[str, Any]], champ: str, motifs: list[str]
+) -> list[dict[str, Any]]:
+    if not motifs:
+        return rows
+    return [r for r in rows if _row_matches(_flatten(r), champ, motifs)]
+
+
+# --------------------------------------------------------------------------
+# Agregation
+# --------------------------------------------------------------------------
+#
+# Pourquoi le serveur agrege plutot que de laisser le modele compter. Mesure du
+# 2026-08-28 : cent envois en colonnes completes pesent quarante mille tokens,
+# et la projection courte quatre mille. Compter mille envois dans la
+# conversation coute donc quarante mille tokens et un comptage a la main. Le
+# meme compte agrege ici tient en trois cents.
+#
+# La contrepartie, et elle est assumee : l'agregat n'est juste que si le
+# perimetre a ete lu en entier. Chaque rendu dit donc combien de lignes ont ete
+# parcourues et si le parcours est alle jusqu'au bout.
+
+# Les regroupements calcules, qui ne sont pas des colonnes de l'API.
+_DERIVED_GROUPS = {
+    "mois": 7,
+    "month": 7,
+    "jour": 10,
+    "day": 10,
+    "annee": 4,
+    "year": 4,
+}
+
+
+def _date_column(rows: list[dict[str, Any]], prefer: str = "") -> str:
+    """La colonne de date d'un regroupement temporel.
+
+    Le choix n'est pas anodin, et il a produit un resultat trompeur avant d'etre
+    explicite : un envoi porte `created_at` (quand il a ete cree) ET `date`
+    (quand il part). Grouper par mois sur `date` alors qu'on a filtre sur
+    `created_date_from` fait apparaitre des mois HORS du perimetre filtre -
+    releve le 2026-08-28 : un filtre au 27 aout rendait un seau « 2026-09 ».
+
+    On prefere donc la colonne qui correspond au filtre pose, et le rendu dit
+    toujours laquelle a servi.
+    """
+    order = ["created_at", "date", "real_departure_time", "real_arrival_time"]
+    if prefer:
+        order = [prefer] + [c for c in order if c != prefer]
+    for candidate in order:
+        for row in rows:
+            if str(row.get(candidate) or "").strip():
+                return candidate
+    return prefer or "created_at"
+
+
+def _aggregate(
+    flat: list[dict[str, Any]],
+    group_by: str,
+    metric: str,
+    top: int,
+    prefer_date: str = "",
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    """Regroupe des lignes aplaties. Rend (lignes, total, libelle_du_groupe)."""
+    key = (group_by or "").strip()
+    cut = _DERIVED_GROUPS.get(key.lower())
+    temporel = False
+    if cut:
+        temporel = True
+        column = _date_column(flat, prefer_date)
+        label = f"{key.lower()} ({column})"
+
+        def bucket(row: dict[str, Any]) -> str:
+            return str(row.get(column) or "")[:cut] or "(sans date)"
+    else:
+        label = key
+        if key.lower() in ("semaine", "week"):
+            temporel = True
+            column = _date_column(flat, prefer_date)
+            label = f"semaine ({column})"
+
+            def bucket(row: dict[str, Any]) -> str:
+                raw = str(row.get(column) or "")[:10]
+                try:
+                    day = dt.date.fromisoformat(raw)
+                except ValueError:
+                    return "(sans date)"
+                year, week, _ = day.isocalendar()
+                return f"{year}-S{week:02d}"
+        else:
+
+            def bucket(row: dict[str, Any]) -> str:
+                return str(row.get(key, "") or "") or "(vide)"
+
+    numeric = metric.strip().lower() not in ("", "nb", "count", "nombre")
+    agg: dict[str, dict[str, Any]] = {}
+    for row in flat:
+        slot_key = bucket(row)
+        slot = agg.setdefault(
+            slot_key, {label: slot_key, "nb": 0, "somme": 0.0, "nb_sans_valeur": 0}
+        )
+        slot["nb"] += 1
+        if numeric:
+            value = row.get(metric)
+            number = cache.to_number(value)
+            if number is None:
+                slot["nb_sans_valeur"] += 1
+            else:
+                slot["somme"] += number
+
+    out = list(agg.values())
+    for slot in out:
+        if numeric:
+            compte = slot["nb"] - slot["nb_sans_valeur"]
+            slot["somme"] = round(slot["somme"], 2)
+            slot["moyenne"] = round(slot["somme"] / compte, 2) if compte else ""
+        else:
+            slot.pop("somme", None)
+            slot.pop("nb_sans_valeur", None)
+    if temporel:
+        # Une serie de mois se lit dans l'ordre du temps, pas du volume.
+        out.sort(key=lambda s: str(s[label]))
+    else:
+        out.sort(
+            key=lambda s: (-(s.get("somme") or 0), -s["nb"]) if numeric else -s["nb"]
+        )
+
+    total = {
+        "nb": sum(s["nb"] for s in out),
+        "groupes": len(out),
+    }
+    if numeric:
+        total["somme"] = round(sum(s.get("somme") or 0 for s in out), 2)
+        total["nb_sans_valeur"] = sum(s.get("nb_sans_valeur") or 0 for s in out)
+    return out[: max(1, int(top))], total, label
 
 
 # --------------------------------------------------------------------------
@@ -1310,6 +1822,7 @@ def shiptify_list_shipments(
     dest_address_id: int = 0,
     from_address_internal_ref: str = "",
     dest_address_internal_ref: str = "",
+    carrier: str = "",
     max_rows: int = 300,
     fields: str = "",
 ) -> str:
@@ -1320,9 +1833,15 @@ def shiptify_list_shipments(
     (carrier.name, address_dest.zipcode) ; '*' rend les 100+ colonnes.
     Par defaut, une projection courte des colonnes utiles.
 
-    Pour un volume qui depasse quelques centaines de lignes, resserre les
-    filtres : la conversation n'est pas un entrepot. Ne bascule sur
-    shiptify_export_csv que si l'utilisateur a demande un fichier.
+    carrier accepte un nom maison ('VIR', 'XPO', 'Sennder') : il est traduit par
+    le lexique d'equipe puis applique COTE CLIENT, l'API n'ayant aucun filtre
+    transporteur sur /shipments/. shiptify_resolve dit ce qu'un terme devient.
+
+    Pour COMPTER plutot que pour regarder, utilise shiptify_summary : il agrege
+    cote serveur et ne rend que le resultat. Pour un volume qui depasse quelques
+    centaines de lignes, resserre les filtres : la conversation n'est pas un
+    entrepot. Ne bascule sur shiptify_export_csv que si l'utilisateur a demande
+    un fichier.
     """
     query = {
         "created_date_from": created_date_from,
@@ -1339,11 +1858,32 @@ def shiptify_list_shipments(
         "from_address_internal_ref": from_address_internal_ref,
         "dest_address_internal_ref": dest_address_internal_ref,
     }
-    rows, truncated = _paginate("/shipments/", query, max_rows=max_rows)
+    projection = fields or SHIPMENT_BRIEF
+    res = _resolve(carrier) if carrier.strip() else None
+    # Avec un filtre transporteur, le budget d'affichage n'a plus de sens : il
+    # compterait des lignes qui vont justement etre ecartees. On parcourt donc
+    # jusqu'a max_rows, et on dit combien ont ete lues puis retenues.
+    rows, stopped = _paginate(
+        "/shipments/",
+        query,
+        max_rows=max_rows,
+        render_fields=projection,
+        render_budget=0 if res else RENDER_MAX_CHARS,
+    )
     header = "GET /shipments/ | filtres : " + json.dumps(
         _clean_query(query), ensure_ascii=False
     )
-    return _render_table(rows, header, truncated, fields or SHIPMENT_BRIEF)
+    if res:
+        scanned = len(rows)
+        rows = _apply_client_filter(rows, res["champ"], res["motifs"])
+        header += (
+            f"\nFiltre « {res['terme']} » -> {res['canonique']}, applique COTE "
+            f"CLIENT sur {res['champ']} (motifs : {', '.join(res['motifs'])}) : "
+            f"{scanned} ligne(s) parcourues, {len(rows)} retenues."
+        )
+        for note in res["notes"]:
+            header += "\n  " + note
+    return _render_table(rows, header, stopped, projection)
 
 
 @mcp.tool()
@@ -1354,9 +1894,6 @@ def shiptify_get_shipment(shipment_id: int, include: str = "") -> str:
     include : liste separee par des virgules parmi tracking-points, contents,
     attachments, metadata, sscc. Vide = l'envoi seul.
     """
-    out: dict[str, Any] = {
-        "shipment": _request(f"/shipments/{int(shipment_id)}")
-    }
     allowed = {
         "tracking-points": f"/shipments/{int(shipment_id)}/tracking-points",
         "attachments": f"/shipments/{int(shipment_id)}/attachments",
@@ -1365,14 +1902,21 @@ def shiptify_get_shipment(shipment_id: int, include: str = "") -> str:
         # contents n'existe en GET que sur le chemin galaxy.
         "contents": f"/galaxy/shipments/{int(shipment_id)}/contents",
     }
+    out: dict[str, Any] = {}
+    # Les sous-ressources sont independantes : les enchainer en serie
+    # multipliait la latence par le nombre d'inclusions, pour rien.
+    names = ["shipment"]
+    calls: list[tuple[str, dict[str, Any]]] = [
+        (f"/shipments/{int(shipment_id)}", {})
+    ]
     for name in [x.strip() for x in include.split(",") if x.strip()]:
         if name not in allowed:
             out[name] = f"inconnu. Valeurs possibles : {', '.join(sorted(allowed))}"
             continue
-        try:
-            out[name] = _request(allowed[name])
-        except ShiptifyError as exc:
-            out[name] = f"ERREUR : {exc}"
+        names.append(name)
+        calls.append((allowed[name], {}))
+    for name, payload in zip(names, _request_many(calls)):
+        out[name] = payload
     return _render_json(out, f"Envoi {shipment_id}")
 
 
@@ -1387,10 +1931,14 @@ def shiptify_list_shipment_requests(
     envois qui en decoulent se lisent avec shiptify_get_shipment_request
     (include=shipments).
     """
-    rows, truncated = _paginate(
-        "/shipment-requests/", {"internal_ref": internal_ref}, max_rows=max_rows
+    rows, stopped = _paginate(
+        "/shipment-requests/",
+        {"internal_ref": internal_ref},
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
     )
-    return _render_table(rows, "GET /shipment-requests/", truncated, fields)
+    return _render_table(rows, "GET /shipment-requests/", stopped, fields)
 
 
 @mcp.tool()
@@ -1432,6 +1980,8 @@ def shiptify_get_shipment_request(
         "invoice-line": f"/shipment-requests/ref/{ref}/invoice-line",
         "tracking-points": f"/shipment-requests/ref/{ref}/shipments/tracking-points",
     }
+    names: list[str] = []
+    calls: list[tuple[str, dict[str, Any]]] = []
     for name in [x.strip() for x in include.split(",") if x.strip()]:
         path = by_id.get(name) if sid else None
         if path is None and ref:
@@ -1443,10 +1993,10 @@ def shiptify_get_shipment_request(
                 f"{', '.join(known)}"
             )
             continue
-        try:
-            out[name] = _request(path)
-        except ShiptifyError as exc:
-            out[name] = f"ERREUR : {exc}"
+        names.append(name)
+        calls.append((path, {}))
+    for name, payload in zip(names, _request_many(calls)):
+        out[name] = payload
     if not out:
         out["shipment_request"] = "aucune ressource demandee pour cette reference"
     label = f"Demande de transport {sid or ref}"
@@ -1473,11 +2023,17 @@ def shiptify_list_invoices(
         "accounting_month": accounting_month,
         "carrier_id": carrier_id,
     }
-    rows, truncated = _paginate("/invoices", query, max_rows=max_rows)
+    rows, stopped = _paginate(
+        "/invoices",
+        query,
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = "GET /invoices | filtres : " + json.dumps(
         _clean_query(query), ensure_ascii=False
     )
-    return _render_table(rows, header, truncated, fields)
+    return _render_table(rows, header, stopped, fields)
 
 
 @mcp.tool()
@@ -1525,11 +2081,17 @@ def shiptify_list_invoice_lines(
         "from_accounting_date": from_accounting_date,
         "to_accounting_date": to_accounting_date,
     }
-    rows, truncated = _paginate("/galaxy/invoice-lines", query, max_rows=max_rows)
+    rows, stopped = _paginate(
+        "/galaxy/invoice-lines",
+        query,
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = "GET /galaxy/invoice-lines | filtres : " + json.dumps(
         _clean_query(query), ensure_ascii=False
     )
-    return _render_table(rows, header, truncated, fields)
+    return _render_table(rows, header, stopped, fields)
 
 
 @mcp.tool()
@@ -1549,11 +2111,17 @@ def shiptify_list_orders(
         "shipment_id": shipment_id or "",
         "shipment_request_id": shipment_request_id or "",
     }
-    rows, truncated = _paginate("/orders", query, max_rows=max_rows)
+    rows, stopped = _paginate(
+        "/orders",
+        query,
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = "GET /orders | filtres : " + json.dumps(
         _clean_query(query), ensure_ascii=False
     )
-    return _render_table(rows, header, truncated, fields)
+    return _render_table(rows, header, stopped, fields)
 
 
 @mcp.tool()
@@ -1566,24 +2134,48 @@ def shiptify_list_locations(
     q cherche dans nom, adresse, ville, pays, reference interne. Utile pour
     retrouver le code d'une agence avant de filtrer les envois dessus.
     """
-    rows, truncated = _paginate(
-        "/locations", {"q": q, "internal_ref": internal_ref}, max_rows=max_rows
+    rows, stopped = _paginate(
+        "/locations",
+        {"q": q, "internal_ref": internal_ref},
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
     )
-    return _render_table(rows, "GET /locations", truncated, fields)
+    return _render_table(rows, "GET /locations", stopped, fields)
 
 
 @mcp.tool()
 @_guard
-def shiptify_list_carriers(internal_ref: str = "") -> str:
-    """Les transporteurs actifs du compte.
+def shiptify_list_carriers(
+    contains: str = "", internal_ref: str = "", fields: str = ""
+) -> str:
+    """Les transporteurs actifs du compte. `contains` cherche dans le nom.
+
+    ATTENTION AU PERIMETRE : ce referentiel est le panel d'AFFRETEMENT middle
+    mile, pas le portefeuille de livraison. Un transporteur du dernier
+    kilometre (VIR, TAMDIS, GLS, Bring...) n'y est pas, et son absence ici ne
+    veut pas dire qu'il n'a pas de flux - elle veut dire que la question ne se
+    pose pas dans Shiptify. shiptify_resolve le dit terme par terme.
+
+    Un meme nom porte souvent plusieurs identifiants, un par implantation :
+    XPO en a quatre. Filtrer sur un seul sous-compte.
 
     A croiser avec l'annuaire du contexte d'equipe
     (01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md) : un nom Shiptify n'est pas toujours
     le nom maison du transporteur.
     """
-    payload = _request("/carriers/active", {"internal_ref": internal_ref})
-    rows = _rows(payload)
-    return _render_table(rows, "GET /carriers/active", False)
+    rows = _rows(_request("/carriers/active", {"internal_ref": internal_ref}))
+    total = len(rows)
+    needle = _norm(contains)
+    if needle:
+        rows = [r for r in rows if needle in _norm(r.get("name"))]
+    header = (
+        f"GET /carriers/active | {total} transporteur(s) actif(s)"
+        + (f", {len(rows)} correspondant a « {contains} »" if needle else "")
+        + "\nCe referentiel est le panel d'affretement middle mile, pas le "
+        "portefeuille de livraison."
+    )
+    return _render_table(rows, header, "", fields or "id,name,code,scac,internal_ref")
 
 
 @mcp.tool()
@@ -1604,11 +2196,17 @@ def shiptify_list_events(
     accept_shipment_request_price, refuse_shipment_request_price.
     """
     query = {"event": event, "date_from": date_from, "date_to": date_to}
-    rows, truncated = _paginate("/events", query, max_rows=max_rows)
+    rows, stopped = _paginate(
+        "/events",
+        query,
+        max_rows=max_rows,
+        render_fields=fields,
+        render_budget=RENDER_MAX_CHARS,
+    )
     header = "GET /events | filtres : " + json.dumps(
         _clean_query(query), ensure_ascii=False
     )
-    return _render_table(rows, header, truncated, fields)
+    return _render_table(rows, header, stopped, fields)
 
 
 _DICTIONARIES = {
@@ -1689,14 +2287,16 @@ def shiptify_export_csv(
         raise ShiptifyError("query_json doit etre un objet JSON.")
 
     if _supports_paging(checked):
-        rows, truncated = _paginate(
+        # Aucun budget de rendu ici : un export a vocation a etre complet, il ne
+        # s'arrete pas a ce qui tiendrait dans la conversation.
+        rows, stopped = _paginate(
             checked, query, max_rows=max_rows, page_limit=_page_limit_for(checked)
         )
     else:
         # Referentiels et collections non paginees : un seul appel, et surtout
         # pas de limit/offset, que ces endpoints refusent.
         rows = _rows(_request(checked, query))
-        truncated = len(rows) > max_rows
+        stopped = "max_rows" if len(rows) > max_rows else ""
         rows = rows[:max_rows]
     flat = [_flatten(r) for r in rows]
 
@@ -1716,7 +2316,13 @@ def shiptify_export_csv(
     target = target_dir / name
 
     try:
-        target.write_text(_to_csv_text(flat), encoding="utf-8-sig")
+        # newline="" plutot que write_text : sans lui, l'ecriture traduit
+        # les fins de ligne en CRLF sous Windows et les laisse en LF sous
+        # macOS. Le meme code produirait deux fichiers differents selon le
+        # poste, ce que la convention de construction interdit
+        # (08_ENGINE/04_mcp/README.md).
+        with target.open("w", encoding="utf-8-sig", newline="") as handle:
+            handle.write(_to_csv_text(flat))
     except OSError as exc:
         raise ShiptifyError(f"Ecriture impossible dans {target} : {exc}") from exc
 
@@ -1727,11 +2333,17 @@ def shiptify_export_csv(
         f"Requete : GET {checked} | filtres : "
         + json.dumps(_clean_query(query), ensure_ascii=False),
     ]
-    if truncated:
+    if stopped:
         out.append(
-            "ATTENTION : export tronque (max_rows ou SHIPTIFY_MAX_PAGES "
-            "atteint). Le fichier n'est PAS le perimetre complet : resserre "
-            "les dates, ou releve SHIPTIFY_MAX_PAGES."
+            f"ATTENTION : export tronque ({stopped}). Le fichier n'est PAS le "
+            "perimetre complet : resserre les dates, releve SHIPTIFY_MAX_PAGES, "
+            "ou construis l'export depuis le cache local, qui n'a pas ce plafond "
+            "(shiptify_sync puis shiptify_export_sql)."
+        )
+    else:
+        out.append(
+            "Lecture complete : la collection a ete parcourue jusqu'a la "
+            "derniere page sur ce perimetre."
         )
     if cols:
         out.append("")
@@ -1767,15 +2379,640 @@ def shiptify_get(
         _clean_query(query), ensure_ascii=False
     )
     if _supports_paging(checked) and "limit" not in query and "offset" not in query:
-        rows, truncated = _paginate(
-            checked, query, max_rows=max_rows, page_limit=_page_limit_for(checked)
+        rows, stopped = _paginate(
+            checked,
+            query,
+            max_rows=max_rows,
+            page_limit=_page_limit_for(checked),
+            render_fields=fields,
+            render_budget=RENDER_MAX_CHARS,
         )
-        return _render_table(rows, header, truncated, fields)
+        return _render_table(rows, header, stopped, fields)
     payload = _request(checked, query)
     rows = _rows(payload)
     if isinstance(payload, list) or (rows and len(rows) > 1):
-        return _render_table(rows[:max_rows], header, len(rows) > max_rows, fields)
+        stopped = "max_rows" if len(rows) > max_rows else ""
+        return _render_table(rows[:max_rows], header, stopped, fields)
     return _render_json(payload, header)
+
+
+# --------------------------------------------------------------------------
+# Le vocabulaire maison, expose comme outil
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+@_guard
+def shiptify_lexique(sujet: str = "") -> str:
+    """Le vocabulaire maison que ce connecteur comprend : alias, pieges, zones.
+
+    A appeler quand une question porte un nom maison (VIR, JP Home, Moulins,
+    Pole Sud, LX) et qu'on ne sait pas a quelle colonne il correspond, ou avant
+    de conclure qu'un transporteur n'a pas de flux.
+
+    sujet filtre l'affichage : 'alias', 'pieges', 'prestations', 'zones',
+    'portefeuille', 'questions'. Vide = tout, en resume.
+    """
+    lex = _lexique()
+    if not lex:
+        raise ShiptifyError(
+            f"Lexique indisponible. {_LEXIQUE_ERROR or 'fichier absent'}. Le "
+            "connecteur fonctionne quand meme, mais il ne traduit plus les noms "
+            "maison : passe les libelles exacts de l'API."
+        )
+    want = _norm(sujet)
+    lines = [
+        f"Lexique du connecteur shiptify, version {lex.get('version')} "
+        f"(mis a jour le {lex.get('updated')} par {lex.get('updated_by')}).",
+        "Source : 01_CONTEXTE/ de la bibliotheque d'equipe. Aucun chiffre ici.",
+        "",
+    ]
+
+    if not want or want in ("ou", "champs", "alias"):
+        lines.append("== Ou chercher quoi ==")
+        for note in (lex.get("ou_chercher_quoi") or {}).get("_pourquoi", []):
+            lines.append("  " + note)
+        for key, val in (lex.get("ou_chercher_quoi") or {}).items():
+            if not key.startswith("_"):
+                lines.append(f"  {key:<22} {val}")
+        lines.append("")
+
+    if not want or want == "alias":
+        lines.append("== Alias reconnus ==")
+        for name, entry in sorted((lex.get("alias") or {}).items()):
+            if "memeque" in entry:
+                lines.append(f"  {name:<16} -> voir « {entry['memeque']} »")
+                continue
+            lines.append(
+                f"  {name:<16} {entry.get('canonique')} | champ {entry.get('champ')} "
+                f"| motifs {', '.join(entry.get('motifs') or [])}"
+            )
+            if entry.get("note"):
+                lines.append(f"                   {entry['note']}")
+            if entry.get("attention"):
+                lines.append(f"                   ATTENTION : {entry['attention']}")
+        lines.append("")
+
+    if not want or want.startswith("piege"):
+        lines.append("== Pieges de nommage ==")
+        for key, val in sorted((lex.get("pieges_de_nommage") or {}).items()):
+            if not key.startswith("_"):
+                lines.append(f"  {key:<20} {val}")
+        lines.append("")
+
+    if not want or want.startswith("prestation"):
+        lines.append("== Prestations ==")
+        for key, val in (lex.get("prestations") or {}).items():
+            if not key.startswith("_"):
+                lines.append(f"  {key:<6} {val}")
+        lines.append("")
+
+    if not want or want.startswith("zone"):
+        lines.append("== Zones par pays ==")
+        for key, val in (lex.get("zones") or {}).items():
+            if not key.startswith("_"):
+                lines.append(f"  {key:<4} {val}")
+        lines.append("")
+
+    if want.startswith("portefeuille"):
+        bloc = lex.get("portefeuille_dernier_kilometre") or {}
+        lines.append("== Portefeuille de livraison (hors panel middle mile) ==")
+        for note in bloc.get("_pourquoi", []):
+            lines.append("  " + note)
+        lines.append("  " + ", ".join(bloc.get("noms") or []))
+        lines.append("")
+
+    if not want or want.startswith("question"):
+        lines.append("== Questions courantes et outil a employer ==")
+        for item in lex.get("questions_frequentes") or []:
+            lines.append(f"  « {item['question']} »")
+            lines.append(f"      {item['outil']} : {item['appel']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+@_guard
+def shiptify_resolve(terme: str) -> str:
+    """Traduit un nom maison en filtre Shiptify reel, et dit ce qui existe.
+
+    A appeler AVANT de conclure qu'un transporteur n'a pas de flux. Croise le
+    lexique d'equipe et le referentiel vivant de l'API : rend le champ a
+    filtrer, les motifs a chercher, et les identifiants Shiptify reels.
+
+    Exemple : « VIR » rend champ=address_dest.name et motifs=VIR, JP HOME, JPH,
+    parce que VIR est l'ancien nom de JP Home et que les deux libelles
+    coexistent sur les memes agences.
+    """
+    res = _resolve(terme)
+    lines = [
+        f"« {res['terme']} » -> {res['canonique']}",
+        f"  connu du lexique  : {'oui' if res['connu_du_lexique'] else 'non'}",
+        f"  champ a filtrer   : {res['champ']}",
+        f"  motifs a chercher : {', '.join(res['motifs']) or '(aucun)'}",
+    ]
+    if res["carriers"]:
+        lines.append(f"  transporteurs Shiptify correspondants ({len(res['carriers'])}) :")
+        for car in res["carriers"]:
+            lines.append(f"      id {car['id']:<7} {car['name']}")
+    for note in res["notes"]:
+        lines.append(f"  {note}")
+    lines.append("")
+    lines.append(
+        "Le filtre transporteur de /shipments/ n'existe pas cote API : il est "
+        "applique cote client sur les lignes ramenees. Sur un resultat tronque, "
+        "il ne donne donc pas un compte."
+    )
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Agregation : la reponse en un appel
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+@_guard
+def shiptify_summary(
+    group_by: str = "carrier.name",
+    metric: str = "nb",
+    created_date_from: str = "",
+    created_date_to: str = "",
+    departure_date_min: str = "",
+    departure_date_max: str = "",
+    arrival_date_min: str = "",
+    arrival_date_max: str = "",
+    carrier: str = "",
+    max_scan: int = 20000,
+    top: int = 30,
+) -> str:
+    """Compte et somme les envois par transporteur, pays, mois... EN UN APPEL.
+
+    C'est l'outil a employer des qu'une question commence par « combien »,
+    « quel est le plus », « repartition », « par mois », « par pays ». Il pagine
+    le perimetre, agrege cote serveur, et ne rend que le resultat : une question
+    qui coutait quarante mille tokens en tient trois cents.
+
+    group_by  une colonne aplatie (carrier.name, address_dest.country,
+              address_dest.city, status, shipment_mode.name, address_from.name,
+              address_dest.name), ou un regroupement calcule : 'mois',
+              'semaine', 'jour', 'annee'.
+    metric    'nb' (defaut) pour un comptage, ou une colonne numerique a
+              sommer : cost, price, total_weight, total_volume,
+              total_linear_meters. La moyenne et le nombre de lignes SANS
+              valeur sont rendus avec la somme - une somme sur une colonne
+              remplie a 20 % n'est pas un montant.
+    carrier   un nom maison ('VIR', 'XPO', 'Sennder'). Il est traduit par le
+              lexique puis applique COTE CLIENT, l'API n'ayant pas de filtre
+              transporteur sur /shipments/. shiptify_resolve dit ce qu'il
+              devient.
+    max_scan  plafond de lignes parcourues. Le rendu dit toujours combien ont
+              ete lues et si le parcours est alle jusqu'au bout : un agregat sur
+              un parcours incomplet n'est pas un total.
+    """
+    query = {
+        "created_date_from": created_date_from,
+        "created_date_to": created_date_to,
+        "departure_date_min": departure_date_min,
+        "departure_date_max": departure_date_max,
+        "arrival_date_min": arrival_date_min,
+        "arrival_date_max": arrival_date_max,
+    }
+    if not _clean_query(query):
+        raise ShiptifyError(
+            "Aucun filtre de date : le perimetre serait la base entiere. Donne "
+            "au moins created_date_from, ou une borne de depart ou d'arrivee."
+        )
+
+    # La colonne de date du regroupement suit le filtre pose : grouper par mois
+    # sur la date de depart alors qu'on a filtre sur la date de creation fait
+    # apparaitre des mois hors perimetre.
+    prefer = "created_at"
+    if departure_date_min or departure_date_max:
+        prefer = "date"
+    if arrival_date_min or arrival_date_max:
+        prefer = "real_arrival_time"
+
+    res = _resolve(carrier) if carrier.strip() else None
+    # Pas de budget de rendu ici : on agrege, donc on veut parcourir le
+    # perimetre, pas seulement ce qui tiendrait a l'ecran.
+    rows, stopped = _paginate("/shipments/", query, max_rows=int(max_scan))
+    scanned = len(rows)
+    flat = [_flatten(r) for r in rows]
+    if res:
+        flat = [f for f in flat if _row_matches(f, res["champ"], res["motifs"])]
+
+    groups, total, label = _aggregate(flat, group_by, metric, top, prefer)
+
+    lines = [
+        "GET /shipments/ agrege | filtres serveur : "
+        + json.dumps(_clean_query(query), ensure_ascii=False),
+        f"Regroupement : {label} | mesure : {metric}",
+        f"{scanned} ligne(s) parcourues"
+        + (f", {len(flat)} retenues apres filtre transporteur" if res else ""),
+    ]
+    if stopped:
+        lines.append(
+            f"ATTENTION : parcours INCOMPLET (arret sur {stopped}). Les chiffres "
+            "ci-dessous portent sur ce qui a ete lu, ce ne sont PAS des totaux. "
+            "Resserre les dates, ou releve max_scan, ou passe par le cache "
+            "(shiptify_sync puis shiptify_sql), qui n'a pas ce plafond."
+        )
+    else:
+        lines.append(
+            "Parcours COMPLET sur ce perimetre : ces chiffres sont citables, "
+            "avec leurs filtres et leurs bornes de dates."
+        )
+    if res:
+        lines.append(
+            f"Filtre transporteur « {res['terme']} » -> {res['canonique']}, "
+            f"applique COTE CLIENT sur {res['champ']} "
+            f"(motifs : {', '.join(res['motifs'])})."
+        )
+        for note in res["notes"]:
+            lines.append("  " + note)
+    lines.append("")
+    if not groups:
+        lines.append("(aucune ligne sur ce perimetre)")
+        return "\n".join(lines)
+    lines.append(_to_csv_text(groups))
+    lines.append("TOTAL : " + json.dumps(total, ensure_ascii=False))
+    if total.get("nb_sans_valeur"):
+        lines.append(
+            f"ATTENTION : {total['nb_sans_valeur']} ligne(s) sur {total['nb']} "
+            f"n'ont aucune valeur dans « {metric} ». La somme ne porte donc pas "
+            "sur tout le perimetre - dis-le si tu cites ce montant."
+        )
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Le cache local : l'historique, sans replafonner a 6 000 lignes
+# --------------------------------------------------------------------------
+#
+# Ce que le cache debloque, et que le direct ne peut pas faire :
+#   - un historique qui depasse le garde-fou de pagination ;
+#   - la MEME question reposee demain sans reconsommer l'API ;
+#   - du SQL libre, donc des croisements que l'API n'expose pas.
+#
+# Ce qu'il ne fait pas : il n'est pas l'etat courant. Une donnee qui a bouge
+# dans Shiptify depuis la synchro n'est pas ici. Pour l'etat du jour, c'est le
+# direct qui fait foi - et chaque rendu du cache affiche sa date de synchro.
+
+SYNC_SETS: dict[str, dict[str, Any]] = {
+    "shipments": {
+        "path": "/shipments/",
+        "index": ("created_at", "date", "carrier.name", "address_dest.country"),
+        "bornes": ("created_date_from", "created_date_to"),
+    },
+    "shipment_requests": {
+        "path": "/shipment-requests/",
+        "index": ("created_at",),
+        "bornes": (),
+    },
+    "invoice_lines": {
+        "path": "/galaxy/invoice-lines",
+        "index": ("status", "carrier_id"),
+        "bornes": ("from_accounting_date", "to_accounting_date"),
+    },
+    "orders": {
+        "path": "/orders",
+        "index": (),
+        "bornes": ("calculated_departure_date_from", "calculated_departure_date_to"),
+    },
+    "locations": {"path": "/locations", "index": (), "bornes": ()},
+    "carriers": {"path": "/carriers/active", "index": (), "bornes": (), "paged": False},
+}
+
+
+def _iter_pages(path: str, query: dict[str, Any], page_limit: int, max_pages: int):
+    """Pagine en rendant page par page, pour ecrire au fil de l'eau.
+
+    La synchronisation ne doit pas garder deux cent mille lignes en memoire
+    avant d'ecrire la premiere : chaque page part en base des qu'elle arrive.
+    """
+    offset = 0
+    for _ in range(max(1, int(max_pages))):
+        page_query = dict(query or {})
+        page_query["limit"] = page_limit
+        page_query["offset"] = offset
+        batch = _rows(_request(path, page_query))
+        if not batch:
+            return
+        yield batch
+        offset += page_limit
+
+
+def _sync_hint() -> str:
+    return (
+        "Lance d'abord shiptify_sync : il rapatrie une collection dans le cache "
+        "local, une fois, et shiptify_sql l'interroge ensuite sans rappeler "
+        "l'API."
+    )
+
+
+@mcp.tool()
+@_guard
+def shiptify_sync(
+    collection: str = "shipments",
+    date_from: str = "",
+    date_to: str = "",
+    query_json: str = "{}",
+    max_rows: int = 200000,
+    max_pages: int = 2000,
+) -> str:
+    """Rapatrie une collection Shiptify dans le cache local SQLite.
+
+    C'est le chemin de l'HISTORIQUE : il n'est pas soumis au garde-fou
+    SHIPTIFY_MAX_PAGES, qui plafonne le direct a 6 000 lignes. Une fois la
+    collection en cache, shiptify_sql et shiptify_summary_sql repondent
+    instantanement, autant de fois qu'on veut, sans reconsommer l'API.
+
+    ECRIT SUR LE DISQUE (un fichier SQLite dans la racine locale, hors de tout
+    dossier synchronise). A lancer sur demande, ou quand une question porte sur
+    plus de quelques milliers de lignes.
+
+    collection : shipments, shipment_requests, invoice_lines, orders,
+                 locations, carriers.
+    date_from / date_to : bornes appliquees COTE SERVEUR sur la colonne de date
+                 propre a la collection. Les poser reduit fortement le trajet.
+    query_json : filtres supplementaires, en JSON.
+
+    Le cache est en INSERT OR REPLACE sur l'identifiant : relancer une synchro
+    complete est toujours juste et ne cree jamais de doublon.
+    """
+    key = _norm(collection).replace(" ", "_")
+    spec = SYNC_SETS.get(key)
+    if spec is None:
+        raise ShiptifyError(
+            f"Collection inconnue : {collection}. Valeurs : "
+            + ", ".join(sorted(SYNC_SETS))
+        )
+    try:
+        query = json.loads(query_json or "{}")
+    except ValueError as exc:
+        raise ShiptifyError(f"query_json n'est pas du JSON valide : {exc}") from exc
+    if not isinstance(query, dict):
+        raise ShiptifyError("query_json doit etre un objet JSON.")
+
+    bornes = spec.get("bornes") or ()
+    if date_from or date_to:
+        if not bornes:
+            raise ShiptifyError(
+                f"La collection '{key}' n'accepte pas de bornes de dates cote "
+                "API. Passe les filtres dans query_json, ou synchronise tout."
+            )
+        if date_from:
+            query[bornes[0]] = date_from
+        if date_to:
+            query[bornes[1]] = date_to
+
+    table = cache.table_name(key)
+    started = dt.datetime.now(dt.timezone.utc)
+    path = spec["path"]
+    conn = cache.open_rw(_cache_path())
+    written = 0
+    pages = 0
+    stopped = ""
+    try:
+        if spec.get("paged", True):
+            for batch in _iter_pages(
+                path, query, _page_limit_for(path), int(max_pages)
+            ):
+                flat = [_flatten(r) for r in batch]
+                written += cache.upsert(
+                    conn,
+                    table,
+                    flat,
+                    _cache_key,
+                    NUMERIC_COLUMNS,
+                    spec.get("index") or (),
+                )
+                pages += 1
+                if written >= int(max_rows):
+                    stopped = f"plafond max_rows={max_rows}"
+                    break
+            else:
+                if pages >= int(max_pages):
+                    stopped = f"plafond max_pages={max_pages}"
+        else:
+            flat = [_flatten(r) for r in _rows(_request(path, query))]
+            written = cache.upsert(
+                conn, table, flat, _cache_key, NUMERIC_COLUMNS, spec.get("index") or ()
+            )
+            pages = 1
+        stamp = started.isoformat(timespec="seconds")
+        cache.meta_set(conn, f"last_sync:{table}", stamp)
+        cache.meta_set(
+            conn,
+            f"scope:{table}",
+            json.dumps(_clean_query(query), ensure_ascii=False) or "(sans filtre)",
+        )
+        conn.commit()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM {cache.quote(table)}"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    out = [
+        f"Synchronisation terminee : [{table}] {written} ligne(s) ecrite(s) "
+        f"en {pages} appel(s).",
+        f"Cache : {_cache_path()}",
+        f"Total en cache pour cette table : {total} ligne(s).",
+        "Perimetre demande : "
+        + (json.dumps(_clean_query(query), ensure_ascii=False) or "(sans filtre)"),
+    ]
+    if stopped:
+        out.append(
+            f"ATTENTION : arret sur le {stopped}. La collection n'a PAS ete "
+            "rapatriee en entier : resserre les bornes de dates et relance, ou "
+            "releve le plafond. Le cache ne represente pas le perimetre demande."
+        )
+    else:
+        out.append(
+            "Collection parcourue jusqu'a la derniere page : le cache couvre "
+            "bien le perimetre demande."
+        )
+    out.append("")
+    out.append("Interroge maintenant avec shiptify_sql, ou shiptify_tables pour voir le cache.")
+    return "\n".join(out)
+
+
+def _cache_key(flat: dict[str, Any]) -> str:
+    """Cle stable d'une ligne en cache. L'identifiant Shiptify quand il existe."""
+    for candidate in ("id", "code", "internal_ref"):
+        value = flat.get(candidate)
+        if value not in (None, ""):
+            return f"{candidate}={value}"
+    return hashlib.sha256(
+        json.dumps(flat, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+@mcp.tool()
+@_guard
+def shiptify_tables() -> str:
+    """Ce que le cache local contient : tables, volumes, date de synchro, perimetre."""
+    try:
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise ShiptifyError(str(exc)) from exc
+    try:
+        names = cache.tables(conn)
+        if not names:
+            return "Cache vide. " + _sync_hint()
+        lines = [f"Cache local : {_cache_path()}", ""]
+        for table in names:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM {cache.quote(table)}"
+            ).fetchone()[0]
+            cols = cache.columns(conn, table)
+            lines.append(f"[{table}] {total} ligne(s), {len(cols)} colonne(s)")
+            stamp = cache.meta_get(conn, f"last_sync:{table}")
+            scope = cache.meta_get(conn, f"scope:{table}")
+            lines.append(f"    derniere synchro : {stamp or '(inconnue)'}")
+            lines.append(f"    perimetre        : {scope or '(inconnu)'}")
+        lines.append("")
+        lines.append(
+            "Le cache n'est pas l'etat courant de Shiptify : ce qui a bouge "
+            "depuis la synchro n'y est pas. Pour le jour meme, utilise les "
+            "outils de liste, qui appellent l'API en direct."
+        )
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def shiptify_columns(table: str = "shipments") -> str:
+    """Colonnes d'une table du cache, avec leur taux de remplissage.
+
+    A lire avant d'ecrire du SQL. Le taux de remplissage n'est pas un detail :
+    sommer une colonne remplie a 12 % rend un montant qui a l'air d'un total.
+    """
+    try:
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise ShiptifyError(str(exc)) from exc
+    try:
+        name = cache.table_name(table)
+        cols = cache.columns(conn, name)
+        if not cols:
+            return f"Table '{name}' absente du cache. " + _sync_hint()
+        total = conn.execute(f"SELECT COUNT(*) FROM {cache.quote(name)}").fetchone()[0]
+        lines = [f"[{name}] {total} ligne(s), {len(cols)} colonne(s)", ""]
+        if not total:
+            lines.extend("  " + c for c in cols)
+            return "\n".join(lines)
+        expr = ", ".join(
+            f"SUM(CASE WHEN {cache.quote(c)} IS NULL OR {cache.quote(c)} = '' "
+            f"THEN 0 ELSE 1 END)"
+            for c in cols
+        )
+        counts = conn.execute(f"SELECT {expr} FROM {cache.quote(name)}").fetchone()
+        for col, filled in zip(cols, counts):
+            kind = "num" if col in NUMERIC_COLUMNS else "txt"
+            lines.append(f"  {col:<44} {kind}  {100 * (filled or 0) / total:5.1f}% rempli")
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def shiptify_sql(sql: str, max_rows: int = 100) -> str:
+    """Interroge le cache local en SQL (SQLite, lecture seule).
+
+    Pour tout ce que l'API ne sait pas faire : un croisement, un historique
+    long, un classement sur douze mois. Instantane, et sans consommer l'API.
+
+    Les colonnes portent le nom aplati de l'API, avec des points : il faut donc
+    les guillemeter. shiptify_columns les liste.
+
+    Exemple :
+      SELECT "carrier.name" AS transporteur, COUNT(*) nb, ROUND(SUM(cost),2) cout
+      FROM shipments WHERE created_at >= '2026-01-01'
+      GROUP BY 1 ORDER BY nb DESC
+    """
+    try:
+        clean = cache.guard_sql(sql)
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise ShiptifyError(str(exc)) from exc
+    try:
+        rows, more = cache.select(conn, clean, limit=int(max_rows))
+        if not rows:
+            return "(aucune ligne)\n\nRequete : " + clean
+        lines = [f"{len(rows)} ligne(s) rendues."]
+        if more:
+            reel = cache.count_of(conn, clean)
+            lines.append(
+                f"ATTENTION : la requete rend {reel} ligne(s) au total, "
+                f"{max_rows} sont affichees. Le compte affiche n'est PAS le "
+                "total - c'est le total ci-contre qui l'est. Releve max_rows, "
+                "ou agrege dans la requete."
+            )
+        lines.append("")
+        lines.append(cache.to_csv_text(rows))
+        return "\n".join(lines)
+    except cache.CacheError as exc:
+        raise ShiptifyError(str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+@_guard
+def shiptify_export_sql(sql: str, filename: str = "", max_rows: int = 500000) -> str:
+    """Exporte en CSV le resultat d'une requete sur le cache. SUR DEMANDE.
+
+    C'est l'export sans plafond de pagination : il lit le cache, pas l'API.
+    A n'appeler que si l'utilisateur a demande un fichier.
+    """
+    try:
+        clean = cache.guard_sql(sql)
+        conn = cache.open_ro(_cache_path(), _sync_hint())
+    except cache.CacheError as exc:
+        raise ShiptifyError(str(exc)) from exc
+    try:
+        cur = conn.execute(clean)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchmany(int(max_rows))
+        reste = cur.fetchone() is not None
+    except Exception as exc:
+        raise ShiptifyError(f"SQL refuse par SQLite : {exc}") from exc
+    finally:
+        conn.close()
+
+    target_dir = _export_dir()
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ShiptifyError(f"Dossier d'export inutilisable ({target_dir}) : {exc}") from exc
+    name = (filename or "").strip() or (
+        "shiptify_sql_" + dt.datetime.now().strftime("%Y-%m-%d_%H%M%S") + ".csv"
+    )
+    if not name.lower().endswith(".csv"):
+        name += ".csv"
+    target = target_dir / pathlib.Path(name).name
+    try:
+        with target.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(cols)
+            writer.writerows(rows)
+    except OSError as exc:
+        raise ShiptifyError(f"Ecriture impossible dans {target} : {exc}") from exc
+
+    out = [f"Export termine : {target}", f"{len(rows)} ligne(s), {len(cols)} colonne(s)."]
+    if reste:
+        out.append(
+            f"ATTENTION : la requete rendait PLUS de {max_rows} lignes, le "
+            "fichier est tronque. Releve max_rows, ou resserre la requete."
+        )
+    else:
+        out.append("Resultat complet : la requete ne rendait pas plus de lignes.")
+    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------

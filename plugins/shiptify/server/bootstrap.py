@@ -66,11 +66,22 @@ def venv_python(venv: pathlib.Path) -> pathlib.Path:
 
 
 def default_root() -> pathlib.Path:
-    """Racine locale de l'outil, hors de tout dossier synchronise."""
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        return pathlib.Path(base) / "shiptify-mcp"
-    return pathlib.Path.home() / ".local" / "share" / "shiptify-mcp"
+    """Racine locale de l'outil, hors de tout dossier synchronise.
+
+    **Le meme chemin sur les deux systemes, et PAS %LOCALAPPDATA%.** C'est la
+    convention de construction de l'equipe (08_ENGINE/04_mcp/README.md), et elle
+    tient a deux mesures.
+
+    Un Python empaquete - Microsoft Store, Python Manager - donne a ses processus
+    enfants une vue VIRTUALISEE de %LOCALAPPDATA% : le plugin ecrit d'un cote, le
+    terminal lit de l'autre, et personne ne voit d'erreur. Le profil utilisateur,
+    lui, n'est pas virtualise.
+
+    Et un chemin different par systeme (`.local/share` ici, `%LOCALAPPDATA%`
+    la-bas) veut dire deux emplacements a documenter, deux a diagnostiquer, et un
+    collegue sur Mac qui ne trouve pas ce que le README de Windows lui decrit.
+    """
+    return pathlib.Path.home() / ".shiptify-mcp"
 
 
 def candidate_venvs() -> list[pathlib.Path]:

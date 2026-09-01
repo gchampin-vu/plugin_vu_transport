@@ -1,0 +1,142 @@
+---
+name: jira
+description: Interroger les deux instances JIRA de Vente-unique en lecture seule - vuproject (le metier : chantiers SUPPLY, incidents d'expedition VUD) et webfacto (les developpements de la WebFacto). Active des qu'une question porte sur un ticket, un epic, une cle de type SUPPLY-1234 ou VUD-1234, un chantier ou un projet suivi dans JIRA, l'avancement d'un lancement pays, Atlas, TIL, une demande faite a la WebFacto, un incident d'expedition, ou des qu'il faut extraire des tickets en CSV. Declenche aussi sur "jira", "ticket", "epic", "sprint", "backlog", "JQL", "SUPPLY", "webfacto", "vuproject", "ou en est", "qui porte", "quels chantiers", "export des tickets".
+---
+
+# Interroger JIRA
+
+JIRA est la **verite de l'avancement** chez Vente-unique. La bibliotheque
+d'equipe porte le pourquoi, le contexte et les decisions ; JIRA porte l'etat
+reel : ce qui est ouvert, ce qui a bouge, qui porte quoi.
+
+Les outils sont exposes par le serveur MCP `jira` du meme plugin. Ils sont
+**tous en lecture**. Creer un ticket, commenter, changer un statut ou affecter
+quelqu'un ne se font pas ici : un statut qui bouge dans JIRA engage l'equipe,
+ca reste un geste humain dans l'interface.
+
+## La chose a ne jamais oublier : il y a DEUX instances
+
+| Tenant | Site | Ce qu'elle porte |
+|---|---|---|
+| **PROJET** | `vuproject.atlassian.net` | le metier : `SUPPLY` (les chantiers), `VUD` (les incidents d'expedition), et dix autres projets hors perimetre |
+| **WF** | `webfacto.atlassian.net` | le travail des developpeurs internes |
+
+Elles n'ont **rien** en commun : deux jeux d'identifiants, deux referentiels de
+projets, deux numerotations. Trois consequences, dans l'ordre ou elles mordent :
+
+1. **Une cle de ticket n'existe que dans son instance.** Tout outil qui prend
+   une cle exige donc `tenant` : `jira_issue`, `jira_comments`,
+   `jira_changelog`, `jira_children`, `jira_statuses`, `jira_user_lookup`.
+2. **Par defaut, les outils de LISTE interrogent les deux** et posent une
+   colonne `tenant` en tete. Ne retire jamais cette colonne d'un tableau que tu
+   restitues : sans elle, deux lignes de deux instances se confondent.
+3. **`max_rows` s'applique PAR instance**, pas au total.
+
+`jira_tenants` dit lesquelles repondent. Si une seule est configuree, dis-le
+avant de citer un chiffre.
+
+**Le faux ami previsible :** les epics `WF - TICKET SPOT <MOIS>` sont dans le
+projet `SUPPLY` de l'instance **PROJET**. Le prefixe `WF` designe le
+destinataire de la demande, pas l'instance. Une question sur « les tickets spot »
+releve de PROJET.
+
+## Commence par le contexte embarque, pas par une requete
+
+**`jira_contexte` repond sans appeler JIRA.** Il porte ce qui ne se devine pas,
+releve sur l'instance et dans `01_CONTEXTE/JIRA_ET_CHANTIERS.md` :
+
+- les **12 projets** de vuproject, et lesquels sont a nous ;
+- le **decodeur des titres VUD** : `HF2607050041-736648-LM` n'est pas une
+  phrase, c'est une reference d'expedition, prefixe d'enseigne + date +
+  sequence + numero + code de prestation ;
+- les **epics par chantier** : Atlas et sa genealogie (SCALIA Log → Atlas,
+  `SUPPLY-3527` etant le cadrage), TIL et son tiering transporteur, les
+  lancements pays et leurs transporteurs, les etudes de rentabilite d'agence ;
+- les **recettes JQL** qui marchent, et les **pieges** qui rendent un chiffre
+  faux.
+
+Sans ce detour, on cherche le bon mot dans le mauvais projet. `TIL` ne veut rien
+dire pour qui ne sait pas que c'est *Tracking Information Log*.
+
+**Le contexte ne porte AUCUN avancement, volontairement.** Une cle citee la est
+un point de depart ; son statut se lit dans JIRA, jamais dans le contexte.
+
+## Compter n'est pas lister - et ici ce n'est pas un detail
+
+**L'API de recherche moderne de Jira Cloud ne rend aucun total.** Elle pagine par
+jeton. Un compte s'obtient donc en parcourant les pages, et c'est
+**`jira_summary`** qui le fait : il ne demande que les champs a grouper, agrege
+cote serveur, et rend la repartition avec les parts.
+
+Utilise-le pour « combien », « comment se repartit », « qui porte quoi », «
+l'evolution mois par mois ». Utilise `jira_recherche` quand la question porte sur
+des **lignes** : « montre-moi les chantiers ouverts », « quels tickets sur cet
+epic ».
+
+**Et lis toujours la ligne de troncature.** Si le rendu dit que la lecture est
+incomplete, le compte est un **plancher**, pas un volume. Deux sorties :
+resserrer le perimetre jusqu'a une lecture complete, ou rapatrier une fois avec
+`jira_sync` et compter en SQL avec `jira_sql`.
+
+## Parle-lui en francais : il traduit, et il montre sa traduction
+
+`jira_recherche` prend des filtres en francais et **affiche le JQL qu'il a
+construit**. C'est ce qui rend la traduction verifiable :
+
+- `statut="ouvert"` / `"en cours"` / `"termine"` / `"a faire"` → passe par la
+  **categorie** de statut, universelle sur Jira Cloud ;
+- `cree_depuis="cette semaine"`, `maj_depuis="30 jours"`, `cree_jusqua="2026-08-01"` ;
+- `assigne="moi"` → `currentUser()` ;
+- `titre="HF"` cherche dans le **titre seul** - c'est ce qu'il faut sur VUD ;
+  `texte="..."` cherche partout, commentaires compris.
+
+**Le serveur REFUSE ce qu'il ne comprend pas**, au lieu de l'ignorer. C'est
+voulu : un filtre ignore ne rend pas moins de lignes, il rend toute la base avec
+l'air d'avoir compris. Si un filtre est refuse, ne contourne pas en le retirant -
+c'est exactement le cas ou le resultat serait faux.
+
+## Les trois pieges qui rendent une reponse fausse
+
+1. **Un filtre par personne exige un accountId.** Depuis la mise en conformite
+   RGPD d'Atlassian, `assignee = "Prenom Nom"` ne marche plus sur Cloud.
+   `jira_user_lookup` donne l'accountId ; `assigne="moi"` evite la question.
+2. **Ne devine jamais un libelle de statut.** Ils sont propres a chaque projet.
+   Filtre sur la categorie, ou lis les libelles reels avec `jira_statuses`.
+3. **Ne devine jamais un nom de champ personnalise.** `jira_fields` donne l'id
+   `customfield_NNNNN` **et** le nom utilisable en JQL.
+
+## Ce qui vaut la peine d'etre lu en entier
+
+`jira_issue` rend la **description en texte lisible** : le serveur aplatit l'ADF
+(l'arbre JSON dans lequel Jira stocke les descriptions). C'est ce qui rend
+exploitable un cadrage comme `SUPPLY-3527`.
+
+Deux options a connaitre : `commentaires=True` - sur un ticket VUD, l'essentiel
+de l'information est dans les echanges, pas dans le titre - et
+`historique=True`, qui donne **depuis quand** le ticket est dans son statut. Un
+ticket ouvert depuis trois mois dont le statut n'a pas bouge depuis dix semaines,
+ce n'est pas la meme conversation qu'un ticket qui vient de changer d'etat.
+
+## L'export : sur demande explicite, et jamais dans la bibliotheque
+
+`jira_export_csv` prend les **memes filtres** que `jira_recherche` : le perimetre
+de la question, pagine en entier - pas les lignes affichees. CSV point-virgule,
+UTF-8 avec BOM, il s'ouvre dans Excel FR sans assistant d'import.
+
+**Ne l'appelle que si l'utilisateur a demande un fichier.** Il ecrit sur le
+disque, dans le dossier local du connecteur - jamais dans la bibliotheque
+d'equipe, ou un CSV partirait chez vingt-six personnes.
+
+Les commandes `/jira-projet-export` et `/jira-wf-export` sont la porte d'entree
+directe.
+
+## Restituer
+
+- **Le resultat d'abord**, la methode ensuite.
+- **Le JQL utilise, toujours** : c'est ce qui rend le chiffre verifiable et
+  rejouable.
+- **Une cle avec son instance et son URL.**
+- **La troncature avant le chiffre**, si le rendu la signale.
+- **Aucun avancement recopie dans la base de connaissance d'equipe.** Si une
+  reponse merite d'etre conservee, c'est le *pourquoi* qui monte, pas le statut -
+  et sur feu vert de Guillaume, jamais de ta propre initiative.

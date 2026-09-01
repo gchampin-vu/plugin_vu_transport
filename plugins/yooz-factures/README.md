@@ -264,12 +264,6 @@ est de confondre `applicationId` et `client_id` — elle rend un
 d'authentification. La poser **une fois pour toute l'equipe** supprime la faute
 au lieu de la documenter.
 
-**Aucun secret dans le fichier d'equipe, et ce n'est pas qu'une consigne** : le
-serveur lit ce fichier a travers une **liste blanche**. Un
-`YOOZ_*_CLIENT_SECRET` ou un `YOOZ_*_REFRESH_TOKEN` pose la-bas est **ignore**,
-et signale par `/yooz-setup` — il ne fonctionnerait pas, il ne ferait que
-fuiter. Detail dans `08_ENGINE/04_mcp/00_config/README.md`.
-
 Deux variables d'environnement permettent de pointer le fichier d'equipe quand
 la bibliotheque SharePoint n'est pas synchronisee a l'endroit attendu :
 `YOOZ_SHARED_ENV` (le fichier) ou `VU_ENGINE_DIR` (la racine `08_ENGINE`).

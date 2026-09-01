@@ -1,0 +1,238 @@
+{
+  "_lisez_moi": [
+    "Vocabulaire maison de l'equipe Logistique & Transport, livre AVEC le connecteur.",
+    "Il sert a une seule chose : qu'une question posee en francais courant ('ce que VIR nous",
+    "a facture cette annee') se traduise en filtre juste, sans que le modele devine.",
+    "",
+    "Il ne contient AUCUN montant et AUCUN code fige. Les codes tiers changent : ils sont",
+    "resolus a l'execution par yooz_resolve_third, contre le cache, qui est la copie de ce",
+    "que Yooz porte reellement. Ce fichier ne porte que les MOTIFS de recherche et les",
+    "pieges."
+  ],
+  "version": "1.1",
+  "updated": "2026-09-01",
+  "updated_by": "Guillaume_Champin",
+  "connecteur": "yooz-factures",
+  "le_piege_du_code_tiers": {
+    "_pourquoi": [
+      "LE defaut le plus couteux de cette API, mesure le 2026-08-28. Le code tiers stocke par",
+      "Yooz n'est PAS 'HVIR' : c'est 'HVIR           (H)', avec son remplissage d'espaces et",
+      "son suffixe de lettre. Et la grille de recherche n'accepte que la forme EXACTE.",
+      "",
+      "Un third_code='HVIR' ne rend pas une erreur : il rend ZERO document, avec un HTTP 200.",
+      "Verifie sur la periode 01/01 au 27/08/2026, societe Vente-Unique : 'HVIR' rend 0",
+      "document, 'HVIR           (H)' rend 24 documents et 3 142 015,68 EUR TTC.",
+      "",
+      "Zero document se lit comme 'ce transporteur ne nous a rien facture'. C'est faux, et",
+      "rien ne le signale. D'ou la regle : on ne saisit JAMAIS un code tiers a la main, on le",
+      "fait resoudre par yooz_resolve_third, qui rend la forme exacte."
+    ],
+    "regle": "Ne jamais composer un code tiers a la main. yooz_resolve_third rend la forme exacte, la societe qui le porte, et le nombre de documents connus.",
+    "operateurs": "L'operateur 'in' avec plusieurs codes fonctionne (verifie le 2026-08-28). En revanche toute recherche PARTIELLE de nom ('like', 'contains') est IGNOREE EN SILENCE par la grille : elle rend alors tout, donc un total faux. Le serveur refuse ces operateurs."
+  },
+  "societes": {
+    "_pourquoi": [
+      "Un tiers n'est pas facture par les deux societes. Interroger la mauvaise rend zero,",
+      "sans rien dire. Releve du 2026-08-28 : VIR est chez Vente-Unique, TAMDIS chez",
+      "DistriService."
+    ],
+    "distriservice": "DistriService. **Ancienne societe de Vente-unique**, aujourd'hui l'une des entites qui recoit les factures. ATTENTION : ne pas la confondre avec le transporteur VIR. Elles ont ete longtemps donnees pour un seul prestataire dans l'annuaire d'equipe, a tort : Distri Service n'a aucun lien avec le groupe Perrenot autre que des contrats. Precise par Guillaume Champin le 2026-09-01.",
+    "vente_unique": "Vente-Unique."
+  },
+  "alias": {
+    "_pourquoi": [
+      "Les motifs a chercher dans thirdPartyName. Un nom maison ne s'ecrit pas comme le",
+      "libelle du fournisseur : « VIR » se saisit « VIR TRANSPORT », et JP Home apparait",
+      "aussi dans « AGEDISS - JP HOME »."
+    ],
+    "vir": {
+      "canonique": "VIR / JP Home (groupe Perrenot)",
+      "motifs": [
+        "VIR",
+        "JP HOME",
+        "JPH"
+      ],
+      "note": "VIR est l'ancien nom de JP Home : un seul prestataire, deux libelles. Chercher les deux. Plusieurs entites coexistent cote Yooz - une entite France et une entite Benelux notamment : les additionner ou non est une DECISION, pas un automatisme.",
+      "source": "Confirme par Guillaume Champin le 2026-08-27, rattachement au groupe Perrenot precise le 2026-09-01.",
+      "groupe": "Perrenot"
+    },
+    "jp home": {
+      "memeque": "vir"
+    },
+    "jph": {
+      "memeque": "vir"
+    },
+    "perrenot": {
+      "canonique": "Groupe Perrenot (VIR / JP Home / TAMDIS)",
+      "motifs": [
+        "VIR",
+        "JP HOME",
+        "JPH",
+        "TAMDIS"
+      ],
+      "note": "Groupe Perrenot (Jacky Perrenot). VIR, JP Home et TAMDIS en sont trois entites : un raisonnement 'par groupe' les additionne, un raisonnement 'par prestataire' ne le fait pas. Dire laquelle des deux lectures on tient. C'est ICI que le total par groupe se construit : les trois entites facturent, et yooz_resolve_third rend leurs codes exacts sur les deux societes. Verifier les libelles rendus avant d'additionner.",
+      "source": "Precise par Guillaume Champin le 2026-09-01."
+    },
+    "tamdis": {
+      "canonique": "TAMDIS (groupe Perrenot)",
+      "motifs": [
+        "TAMDIS"
+      ],
+      "groupe": "Perrenot",
+      "note": "Filiale du groupe Perrenot, comme VIR et JP Home. Zone Europe Sud. Facture cote DistriService - qui est une societe de Vente-unique, pas une societe du groupe Perrenot.",
+      "source": "Precise par Guillaume Champin le 2026-09-01."
+    },
+    "gls": {
+      "canonique": "GLS",
+      "motifs": [
+        "GLS"
+      ],
+      "note": "Transverse aux trois zones, par groupes de pays."
+    },
+    "dsv": {
+      "canonique": "DSV",
+      "motifs": [
+        "DSV"
+      ],
+      "note": "Affretement middle mile, et emetteur du taux gazole hebdomadaire."
+    },
+    "bring": {
+      "canonique": "Bring (Suede)",
+      "motifs": [
+        "BRING"
+      ],
+      "note": "ATTENTION : le motif « BRING » ramene AUSSI Posten Bring, qui est un AUTRE prestataire. Posten Bring livre la Norvege, Bring livre la Suede. Au Danemark les deux perimetres produits coexistent : Bring y fait le colis postal, RTC Transport le meuble et l'encombrant. Regarder le libelle exact avant d'additionner - les entites relevees ne portent pas le meme pays.",
+      "source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md, tranche le 2026-08-26 ; Danemark precise par Guillaume Champin le 2026-08-27."
+    },
+    "posten bring": {
+      "memeque": "bring"
+    },
+    "rhenus": {
+      "canonique": "Rhenus",
+      "motifs": [
+        "RHENUS"
+      ],
+      "note": "QUATRE entites distinctes : Italie, Pologne, une etude Pays-Bas, une entite Road / Overland Benelux. Ne jamais additionner sans preciser laquelle."
+    },
+    "invio": {
+      "canonique": "INVIO",
+      "motifs": [
+        "INVIO"
+      ],
+      "note": "Prestataire italien de Mantoue. « Nvio » n'existe pas, c'etait une coquille."
+    },
+    "ait": {
+      "canonique": "AIT",
+      "motifs": [
+        "AIT"
+      ],
+      "note": "Perimetre Royaume-Uni ET Republique d'Irlande."
+    },
+    "rtc": {
+      "canonique": "RTC Transport",
+      "motifs": [
+        "RTC"
+      ],
+      "note": "Danemark, meuble et encombrant B2C, sites de Brondby et Vejle."
+    },
+    "no limit": {
+      "canonique": "No Limit",
+      "motifs": [
+        "NO LIMIT",
+        "NOLIMIT"
+      ],
+      "note": "Aussi ecrit « Nos Limites » dans le corpus."
+    },
+    "cogepart": {
+      "canonique": "Cogepart",
+      "motifs": [
+        "COGEPART"
+      ]
+    },
+    "geodis": {
+      "canonique": "Geodis",
+      "motifs": [
+        "GEODIS"
+      ]
+    },
+    "chronopost": {
+      "canonique": "Chronopost",
+      "motifs": [
+        "CHRONOPOST"
+      ]
+    },
+    "colissimo": {
+      "canonique": "Colissimo",
+      "motifs": [
+        "COLISSIMO"
+      ],
+      "note": "A ne pas confondre avec « Colis Postal », qui est un autre dossier du corpus."
+    },
+    "mondial relay": {
+      "canonique": "Mondial Relay",
+      "motifs": [
+        "MONDIAL RELAY"
+      ]
+    },
+    "dhl": {
+      "canonique": "DHL",
+      "motifs": [
+        "DHL"
+      ],
+      "note": "DHL Home et DHL Freight sont DEUX prestations et deux dossiers, Allemagne et Autriche. Le motif les ramene toutes les deux."
+    },
+    "sennder": {
+      "canonique": "Sennder",
+      "motifs": [
+        "SENNDER"
+      ],
+      "note": "Middle mile. Aucune facture relevee dans le cache au 2026-08-28 : ne pas en conclure une absence, verifier la societe et la periode."
+    },
+    "jacky perrenot": {
+      "memeque": "perrenot"
+    }
+  },
+  "colonnes": {
+    "_pourquoi": [
+      "Les noms de colonnes du data report Yooz ne sont pas devinables. yooz_columns donne la liste complete et le taux de remplissage."
+    ],
+    "thirdPartyName": "Le libelle du fournisseur. C'est ce qu'on cherche avec un motif.",
+    "thirdPartyCode": "Le code du fournisseur, AVEC son remplissage d'espaces et son suffixe. C'est lui qu'attend third_code, a l'exact.",
+    "source_app": "La societe : DistriService ou Vente-Unique.",
+    "orgUnitCode": "L'unite d'organisation. 'VUN' par exemple.",
+    "yoozNumber": "Le numero Yooz du document.",
+    "YZ_NUMBER_YZ_COMMONS": "Le numero de piece du fournisseur.",
+    "YZ_DATE_YZ_COMMONS": "La date de facture.",
+    "YZ_DUE_DATE_YZ_COMMONS": "La date d'echeance.",
+    "totalAmount": "Le montant TTC. Dans le CACHE, un avoir porte un montant NEGATIF. Dans la GRILLE en direct, il est POSITIF - ce sont les colonnes amountSigned et totalAmountSigned qu'il faut additionner.",
+    "blockedBoolean": "Document bloque.",
+    "blockingCause": "La cause du blocage."
+  },
+  "questions_frequentes": [
+    {
+      "question": "combien VIR nous a facture cette annee",
+      "outil": "yooz_live_summary",
+      "appel": "third='VIR' - le connecteur resout le code exact et la societe tout seul"
+    },
+    {
+      "question": "les factures bloquees et pourquoi",
+      "outil": "yooz_live_invoices",
+      "appel": "blocked='oui', puis regrouper sur blockingCause"
+    },
+    {
+      "question": "ce qui arrive a echeance la semaine prochaine",
+      "outil": "yooz_live_invoices",
+      "appel": "due_from / due_to"
+    },
+    {
+      "question": "l'evolution mois par mois d'un transporteur",
+      "outil": "yooz_live_summary",
+      "appel": "third='...', group_by='mois'"
+    },
+    {
+      "question": "un classement sur trois ans",
+      "outil": "yooz_sync puis yooz_sql",
+      "appel": "la grille en direct plafonne a 20 000 lignes, le cache non"
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "_lisez_moi": [
+    "Vocabulaire maison de l'equipe Logistique & Transport, livre AVEC le connecteur.",
+    "Il sert a une seule chose : qu'une question posee en francais courant ('le temps",
+    "d'attente des camions Sennder a Moulins') se traduise en filtre juste, sans deviner.",
+    "",
+    "Il ne contient AUCUN fait chiffre : ni volume, ni duree, ni date. Un chiffre vient de",
+    "l'API, jamais d'ici. Les taux de remplissage sont une propriete de la DONNEE, pas un",
+    "resultat : ils disent ce qu'on peut moyenner sans mentir.",
+    "",
+    "Source : 01_CONTEXTE/ de la bibliotheque d'equipe, et un echantillon de 200 visiteurs",
+    "par site releve le 2026-08-28."
+  ],
+  "version": "1.1",
+  "updated": "2026-09-01",
+  "updated_by": "Guillaume_Champin",
+  "connecteur": "peripass",
+  "sites": {
+    "_pourquoi": [
+      "Peripass n'a pas une base mais une PAR SITE : deux tenants, deux cles, deux jeux",
+      "d'identifiants, rien de partage. Le meme id existe des deux cotes et designe deux",
+      "camions differents.",
+      "",
+      "Les noms maison ne sont pas les codes. « Moulins » et « Montbeugny » designent le MEME",
+      "site, code AUV : Montbeugny est la commune, Moulins la ville voisine, et les deux",
+      "circulent - Montbeugny cote exploitation, Moulins cote projets."
+    ],
+    "source": "01_CONTEXTE/SITES.md",
+    "AUV": {
+      "nom": "Montbeugny / Moulins",
+      "departement": "Allier (03)",
+      "alias": [
+        "MOULINS",
+        "MONTBEUGNY",
+        "ALLIER",
+        "03",
+        "AUVERGNE"
+      ],
+      "note": "Ouvert en decembre 2025. Cible 62 000 m2, 5 cellules, 55 portes de quai. Exploite par VU Logistics AUV. Le pilotage, le reverse et le reemballage restent centralises a Amblainville et ne sont PAS dupliques ici."
+    },
+    "AMB": {
+      "nom": "Amblainville",
+      "departement": "Oise (60)",
+      "alias": [
+        "AMBLAINVILLE",
+        "OISE",
+        "60"
+      ],
+      "note": "83 000 m2, 13 cellules, 85 portes de quai. Exploite par VU Logistics AMB. A 150 km du port du Havre."
+    }
+  },
+  "intentions": {
+    "_pourquoi": [
+      "Ce que la question dit, et le parametre que ca vaut. Peripass IGNORE EN SILENCE un",
+      "filtre de periode sans champ de reference : il rend alors toute la base, avec l'air",
+      "d'avoir filtre. Choisir le bon champ n'est donc pas un confort."
+    ],
+    "creneau": {
+      "timestamp_field": "SlotStart",
+      "quoi": "L'heure de rendez-vous PLANIFIEE. C'est le champ d'une question de respect de creneau ou de plan de quai."
+    },
+    "rendez-vous": {
+      "memeque": "creneau"
+    },
+    "rdv": {
+      "memeque": "creneau"
+    },
+    "planifie": {
+      "memeque": "creneau"
+    },
+    "arrivee": {
+      "timestamp_field": "Arrived",
+      "quoi": "L'heure d'arrivee REELLE sur site. C'est elle qu'on compare au creneau quand un transporteur conteste un retard."
+    },
+    "arrive": {
+      "memeque": "arrivee"
+    },
+    "check-in": {
+      "timestamp_field": "CheckedIn",
+      "quoi": "L'enregistrement a l'accueil, apres l'arrivee."
+    },
+    "checkin": {
+      "memeque": "check-in"
+    },
+    "depart": {
+      "timestamp_field": "Departed",
+      "quoi": "La sortie du site. Borne haute du temps d'immobilisation."
+    },
+    "sortie": {
+      "memeque": "depart"
+    }
+  },
+  "indicateurs": {
+    "_pourquoi": [
+      "Les trois durees que Peripass calcule lui-meme. Les moyenner est le coeur du sujet",
+      "yard, et c'est ce que peripass_summary fait cote serveur."
+    ],
+    "waitingTimeMinutes": "Temps d'ATTENTE, en minutes. « combien de temps mes camions attendent » se repond ici.",
+    "turnaroundTimeMinutes": "Temps de ROTATION total sur site, en minutes : de l'arrivee au depart. Le temps d'immobilisation d'un camion, celui qui se facture.",
+    "processingTimeMinutes": "Temps de TRAITEMENT, en minutes : la part reellement operationnelle de la rotation."
+  },
+  "champs_personnalises": {
+    "_pourquoi": [
+      "L'API Peripass n'expose AUCUN schema de ces champs : ils arrivent dans un objet",
+      "`fields` dont les cles dependent de la configuration du tenant. Ils portent des",
+      "accents et des espaces, et search_field les attend au caractere pres, casse comprise.",
+      "",
+      "Taux de remplissage releves le 2026-08-28 sur 200 visiteurs par site. Ils varient",
+      "d'un site a l'autre et dans le temps : peripass_fields donne l'etat du jour."
+    ],
+    "Numero RDV": {
+      "cle": "Numéro RDV",
+      "remplissage": "AUV 96 %, AMB 72 %",
+      "exemples": "AUV01092026SEN67, AMB31082026PRE349",
+      "note": "Le code encode le site, la date et un trigramme transporteur."
+    },
+    "Transporteur": {
+      "cle": "Transporteur",
+      "remplissage": "AUV 48 %, AMB variable",
+      "exemples": "SENNDER FRANCE, BERT, DSV",
+      "note": "ATTENTION : rempli sur moins de la moitie des lignes. Un regroupement par transporteur laisse donc de cote une part importante du perimetre - le dire avant de citer une moyenne par transporteur."
+    },
+    "Quai Attribue": {
+      "cle": "Quai Attribué",
+      "remplissage": "AUV 71 %, AMB 43 %",
+      "exemples": "B-12, E - 32",
+      "note": "Le format differe entre les deux sites : 'B-12' a AUV, 'E - 32' a AMB, avec des espaces. Ne pas comparer les deux sans normaliser."
+    },
+    "Numero tournee": {
+      "cle": "Numéro tournée",
+      "remplissage": "AUV 48 %, AMB 38 %",
+      "exemples": "2100, 7169, RECUP 7012",
+      "note": "AMB prefixe certaines tournees de 'RECUP'."
+    },
+    "Activite": {
+      "cle": "Activité",
+      "remplissage": "AUV 78 %, AMB 63 %",
+      "exemples": "VENTE UNIQUE, VENTE UNIQUE + CAFOM"
+    },
+    "FRAQ": {
+      "cle": "FRAQ",
+      "remplissage": "AUV 48 %, AMB 38 %"
+    },
+    "Plaque vehicule": {
+      "cle": "Plaque d'immatriculation du véhicule",
+      "remplissage": "AUV 76 %, AMB 46 %"
+    },
+    "Plaque remorque": {
+      "cle": "Plaque d'immatriculation de la remorque",
+      "remplissage": "AUV 62 %"
+    },
+    "Decroche": {
+      "cle": "Décroché/Accroché",
+      "remplissage": "AUV 90 %, AMB 60 %",
+      "exemples": "OUI, NON",
+      "note": "Dit si la remorque a ete decrochee : c'est ce qui distingue une depose d'une rotation a quai."
+    },
+    "Numero de commande": {
+      "cle": "Numéro de commande",
+      "remplissage": "AUV 32 %"
+    },
+    "Fournisseur": {
+      "cle": "Fournisseur",
+      "remplissage": "AUV 28 %"
+    },
+    "Debut creneau": {
+      "cle": "Début créneau horaire",
+      "remplissage": "AUV 96 %, AMB 72 %"
+    },
+    "Fin creneau": {
+      "cle": "Fin créneau horaire",
+      "remplissage": "AUV 96 %, AMB 72 %"
+    }
+  },
+  "transporteurs": {
+    "_pourquoi": [
+      "Les libelles saisis dans le champ personnalise « Transporteur » ne sont pas les noms",
+      "maison. Ce bloc dit quoi chercher. La liste n'est pas fermee : c'est une saisie."
+    ],
+    "sennder": [
+      "SENNDER"
+    ],
+    "bert": [
+      "BERT"
+    ],
+    "dsv": [
+      "DSV"
+    ],
+    "prevote": [
+      "PREVOT",
+      "PRE"
+    ],
+    "vir": [
+      "VIR",
+      "JP HOME",
+      "JPH"
+    ],
+    "_note_vir": "VIR est l'ancien nom de JP Home : chercher les deux, plus JPH. VIR, JP Home et TAMDIS appartiennent au meme groupe, Perrenot (Jacky Perrenot) : le motif 'perrenot' ramene les trois. Un total par groupe et un total par entite ne sont pas le meme chiffre - dire lequel on cite. Confirme par Guillaume Champin le 2026-08-27, groupe precise le 2026-09-01.",
+    "tamdis": [
+      "TAMDIS"
+    ],
+    "perrenot": [
+      "VIR",
+      "JP HOME",
+      "JPH",
+      "TAMDIS"
+    ]
+  },
+  "pieges": {
+    "filtre_ignore": "Peripass IGNORE EN SILENCE un filtre mal forme - c'est ecrit dans son contrat : « If format is incorrect we will ignore the filter ». Une date mal ecrite ne rend pas une erreur, elle rend TOUTES les lignes. Le serveur valide donc les enums avant d'emettre, et refuse une periode sans champ de reference.",
+    "max_rows_par_site": "max_rows s'applique PAR SITE, pas au total. Deux sites a 300 lignes rendent jusqu'a 600 lignes.",
+    "id_par_tenant": "Un identifiant n'existe que dans son site. Le visiteur 4218 existe des deux cotes et designe deux camions differents. Tout outil qui prend un id exige donc `site`.",
+    "quota": "Peripass compte les RESSOURCES lues, pas les requetes : ramener 6 000 visiteurs coute 6 000 unites de quota. C'est la raison d'etre du cache local - une question reposee sur le cache ne coute rien.",
+    "403": "Peripass rend un HTTP 403 A CORPS VIDE aussi bien pour une cle absente que pour une cle fausse ou sans droits. Sa documentation annonce un 401 : ce n'est pas ce qui se passe. peripass_doctor dit si une cle est lue et d'ou elle vient."
+  },
+  "questions_frequentes": [
+    {
+      "question": "combien de camions sont arrives la semaine derniere",
+      "outil": "peripass_summary",
+      "appel": "group_by='site', timestamp_field='Arrived', bornes de la semaine"
+    },
+    {
+      "question": "quel est le temps d'attente moyen par transporteur",
+      "outil": "peripass_summary",
+      "appel": "group_by='fields.Transporteur', metric='waitingTimeMinutes'"
+    },
+    {
+      "question": "temps de rotation moyen a Moulins en aout",
+      "outil": "peripass_summary",
+      "appel": "site='Moulins' (traduit en AUV), metric='turnaroundTimeMinutes', group_by='semaine'"
+    },
+    {
+      "question": "les creneaux de demain",
+      "outil": "peripass_list_visitors",
+      "appel": "timestamp_field='SlotStart' et les bornes du jour"
+    },
+    {
+      "question": "l'historique sur douze mois",
+      "outil": "peripass_sync puis peripass_sql",
+      "appel": "le direct plafonne a 6 000 lignes par site et consomme le quota a chaque fois"
+    }
+  ]
+}

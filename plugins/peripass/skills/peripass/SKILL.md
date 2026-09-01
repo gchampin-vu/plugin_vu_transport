@@ -61,8 +61,71 @@ Le serveur pose donc des garde-fous, avant tout appel :
 Si un outil te refuse un filtre, ne contourne pas en retirant le filtre : c'est
 exactement le cas ou le resultat serait faux.
 
+## Moyenner n'est pas lister : commence par l'agregation
+
+**Le coeur du sujet yard est une moyenne, pas une liste.** « Combien de temps mes
+camions attendent », « quel transporteur immobilise le plus », « ca s'ameliore
+ou pas » : c'est **`peripass_summary`**, pas `peripass_list_visitors`.
+
+Ce n'est pas un choix de style. Mesure du 2026-08-28 : cent visiteurs pesent
+8 500 tokens meme avec la projection courte, et **le quota Peripass compte les
+ressources lues** - lister pour compter paie donc deux fois. `peripass_summary`
+a parcouru 1 585 visiteurs d'aout sur les deux sites en 5,4 secondes et rendu
+960 caracteres.
+
+Il rend **la moyenne, la mediane, le p90 et le maximum**, et ce n'est pas du
+luxe : sur le meme releve, la mediane d'attente est de 6 minutes et le maximum
+de 107 000 minutes. Une moyenne seule cache la queue de distribution, et c'est
+la queue qui fait le litige. Il dit aussi **sur combien de lignes la moyenne est
+calculee** : `waitingTimeMinutes` manquait sur 78 des 1 585 lignes.
+
+Lister reste juste quand la question porte sur des lignes : « quels camions sont
+sur la cour », « montre-moi les creneaux de demain ».
+
+## Parle-lui en francais : il traduit
+
+**`site="Moulins"` marche desormais**, comme `"Montbeugny"`, `"Amblainville"`,
+`"Oise"` ou `"Allier"` - le serveur les traduit en codes de tenant. Avant, ils
+echouaient sur un site inconnu, ce qui est la mauvaise reponse a une question
+juste.
+
+De meme, `timestamp_field` accepte les mots metier : **`"creneau"`** vaut
+`SlotStart`, **`"arrivee"`** vaut `Arrived`, **`"depart"`** vaut `Departed`. Et
+`transporteur="VIR"` cherche VIR, JP HOME et JPH, puisque VIR est l'ancien nom
+de JP Home.
+
+**`peripass_lexique`** donne tout : les sites et leurs alias, les intentions, les
+trois durees, les champs personnalises avec leurs taux de remplissage et leurs
+cles exactes, et les pieges.
+
+**Attention sur le champ « Transporteur »** : c'est une SAISIE, remplie sur 48 %
+des lignes a AUV. Ce qui n'est pas retenu par un filtre transporteur n'est donc
+pas forcement d'un autre transporteur - ca peut etre une ligne sans transporteur
+saisi. `peripass_summary` le dit ligne par ligne.
+
+## L'historique passe par le cache, et il ne coute pas de quota
+
+Le direct plafonne a 6 000 lignes **par site**, et chaque lecture consomme le
+quota. Pour trois mois, ou pour reposer la meme question demain :
+
+1. **`peripass_sync`** une fois - il rapatrie visiteurs, assets ou taches dans un
+   SQLite local, sans ce plafond. Il ecrit sur le disque : sur demande.
+2. **`peripass_sql`** ensuite, instantanement et **sans quota**. Les colonnes
+   portent des points et des accents, il faut les guillemeter :
+   `SELECT site, "fields.Transporteur", AVG(waitingTimeMinutes) FROM visitors GROUP BY 1,2`.
+3. **`peripass_columns`** avant d'ecrire le SQL, **`peripass_tables`** pour savoir
+   ce que le cache contient, par site, et **de quand il date**.
+
+La cle de deduplication inclut le site : un id Peripass n'est unique que dans
+son tenant, et sans ca la seconde synchro ecraserait la premiere.
+
+**Le cache n'est pas l'etat de la cour.** Un camion arrive depuis la synchro n'y
+est pas. Pour le temps reel, ce sont les outils de liste.
+
 ## L'ordre qui marche
 
+0. **`peripass_summary`** si la question est un compte ou une moyenne. C'est le
+   cas le plus frequent, et il s'arrete la.
 1. **`peripass_sites`** — quels sites repondent, et sous quel code.
 2. **`peripass_referential`** (`profiles`, `dispatchdashboards`) — les noms
    reels des profils et des quais. **Rien ne garantit qu'AUV et AMB portent
@@ -144,6 +207,18 @@ un signe qu'on appelle trop souvent, mais qu'on ramene trop large.
 
 En pratique : resserre la periode avant d'augmenter `max_rows`, et ne fais pas
 un export complet pour repondre a une question qui tient sur une semaine.
+
+**Trois choses tiennent ce quota depuis le 2026-08-28.**
+
+- Les outils de liste **ne paginent plus ce qui ne sera pas affiche**. Avant,
+  `max_rows=300` sur deux sites ramenait 600 lignes en 12 appels et en affichait
+  70 : 530 lignes jetees, donc 530 unites de quota pour rien. Ils s'arretent
+  maintenant des que la projection remplit l'ecran, et le rendu le dit
+  (`budget`).
+- Un `HTTP 429` **n'est pas rejoue automatiquement**, volontairement : insister
+  ne fait pas passer la requete, ca consomme la fenetre suivante.
+- Une question qui revient sur le meme perimetre se rapatrie une fois avec
+  `peripass_sync`, et se relit ensuite **sans quota**.
 
 ## Les quatre pieges de restitution
 

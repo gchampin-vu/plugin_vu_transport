@@ -26,6 +26,16 @@ shutil.rmtree(SANDBOX, ignore_errors=True)
 SANDBOX.mkdir(parents=True, exist_ok=True)
 os.environ["YOOZ_HOME"] = str(SANDBOX)
 
+# Et AUCUN fichier d'equipe. Sur un poste qui synchronise la bibliotheque,
+# 08_ENGINE/04_mcp/00_config/yooz.shared.env est trouve et lu au niveau 2 de
+# _env : les scenarios « champ vide » et « substitution non resolue » etaient
+# alors satisfaits par les VRAIS identifiants d'equipe, et trois controles
+# echouaient sur la machine de celui qui developpe - la seule ou la suite est
+# lancee. On coupe l'acces avant l'import du serveur, pour que le cache du
+# fichier partage se remplisse a vide.
+os.environ["YOOZ_SHARED_ENV"] = str(SANDBOX / "_inexistant_.shared.env")
+os.environ.pop("VU_ENGINE_DIR", None)
+
 (SANDBOX / "yooz.env").write_text(
     "YOOZ_COMPANIES=distriservice,vente_unique\n"
     "YOOZ_DEFAULT_REPORT_ID=report-factures\n"
@@ -212,6 +222,28 @@ def expect(label, condition):
     global ok
     print(("  OK   " if condition else "  ECHEC") + f" {label}")
     ok = ok and bool(condition)
+
+
+# --------------------------------------------------------------------------
+# vu_cache.py est DUPLIQUE a l'identique dans les trois plugins : un plugin
+# Claude Code est autonome et ne peut pas importer son voisin. Cette empreinte
+# est la contrepartie de la duplication : si quelqu'un corrige le module dans
+# un seul plugin, ce controle le dit, au lieu de laisser les trois copies
+# diverger en silence. En cas d'echec : recopier le fichier dans les trois
+# plugins, puis mettre a jour l'empreinte dans les trois test_offline.py.
+# --------------------------------------------------------------------------
+import hashlib as _hashlib  # noqa: E402
+
+EMPREINTE_VU_CACHE = "d346b3cfc1ac0e21ab44640a6004827f564dbd5b3b9cfaf865ce36f24204fdb2"
+# chr(13) plutot qu'un echappement : la CHAINE de generation de ce fichier a
+# deja mange une fois la sequence litterale, et le test ne compilait plus.
+_vu_cache_brut = (
+    SERVER.resolve().parent / "vu_cache.py"
+).read_text(encoding="utf-8").replace(chr(13), "").encode("utf-8")
+expect(
+    "vu_cache.py est la version partagee attendue",
+    _hashlib.sha256(_vu_cache_brut).hexdigest() == EMPREINTE_VU_CACHE,
+)
 
 
 # --- 1. l'historique ------------------------------------------------------

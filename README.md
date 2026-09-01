@@ -16,18 +16,6 @@ jour tout seul ensuite.
 | `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (20 outils) + une skill. **Recherche filtree en direct sur la grille du portail**, historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-28 (56 controles, 3 echecs connus d'isolation du test). **Chemin direct confronte au vrai Yooz le 2026-08-28** : rapproche du cache sur 3 303 documents, aucun ecart de montant |
 | `peripass` | Serveur MCP en lecture seule sur le yard management Peripass (20 outils) + une skill. **Multi-tenant** : une cle par site, AUV et AMB interroges ensemble, une colonne `site` sur chaque resultat | teste hors reseau le 2026-08-28 (82 controles), handshake MCP et chaine HTTP verifies contre les deux hotes de production. **Pas encore confronte a un tenant avec une cle valide** : les cles du script Power Query sont a faire tourner d'abord |
 
-## Pourquoi un plugin plutot qu'un `claude mcp add`
-
-`claude mcp add` marche tres bien pour soi. Il ne se partage pas : chacun doit
-recopier un chemin absolu, installer les dependances a la main, et personne ne
-recoit les corrections. Le plugin repond aux trois :
-
-- **une commande pour installer**, pas un mode operatoire ;
-- **les dependances s'installent au premier demarrage** (voir l'amorce plus
-  bas) ;
-- **chacun saisit sa propre cle** dans l'interface du plugin. Aucune cle ne
-  circule, ni dans le catalogue, ni dans un fichier partage, ni dans un message.
-
 ## Installer, cote collegue
 
 Deux commandes dans Claude Code. La source depend de la ou le catalogue est
@@ -52,13 +40,6 @@ Puis, dans les deux cas :
 /plugin install yooz-factures@vu-transport
 /plugin install peripass@vu-transport
 ```
-
-Claude Code demande alors les identifiants : la **cle d'API Shiptify**, pour
-Yooz les quatre valeurs de chaque societe (`applicationId`, `client_id`,
-`client_secret`, refresh token), et pour Peripass **une cle par site** — AUV et
-AMB sont deux tenants distincts. **Tout reste sur le poste du collegue** : les
-champs marques `sensitive` sont collectes par Claude Code lui-meme, rien n'est
-versionne, partage, ni ecrit dans le drive d'equipe.
 
 ### La saisie peut attendre
 
@@ -107,12 +88,6 @@ faut ensuite un premier rapatriement, une fois :
 
 > fais un yooz_sync complet sur les deux societes
 
-## Ce qu'un collegue doit obtenir des editeurs
-
-Aucun de ces plugins ne donne d'acces : ils utilisent **les identifiants du
-collegue**. Sans cle, un plugin s'installe et ne repond rien d'utile. La demande
-se fait aupres de l'editeur, par le canal habituel — et **cote Peripass, il en
-faut deux** : une par tenant, AUV et AMB.
 
 ## Publier, cote equipe
 

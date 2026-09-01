@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shiptify",
   "displayName": "Shiptify (lecture seule)",
-  "version": "1.4.0",
-  "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Export CSV pagine, sur demande explicite.",
+  "version": "1.5.0",
+  "description": "Interroge la base Shiptify en lecture seule : envois, demandes de transport, commandes, lieux, transporteurs, factures et lignes de facture, evenements, referentiels. Agregation cote serveur (compter, sommer, repartir) pour repondre en un appel, lexique metier qui traduit les noms maison en filtres justes, cache local SQLite interrogeable en SQL pour l'historique. Export CSV sur demande explicite. 28 outils.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
   },

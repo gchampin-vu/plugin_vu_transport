@@ -1,0 +1,312 @@
+{
+  "_lisez_moi": "Contexte JIRA embarque dans le connecteur. Il sert a traduire une question en francais en JQL juste, SANS appel de decouverte. Il ne porte AUCUN avancement : JIRA fait foi sur les statuts et les dates. Releve le 2026-09-01 sur l'API de vuproject.atlassian.net, complete par 01_CONTEXTE/JIRA_ET_CHANTIERS.md de la bibliotheque d'equipe.",
+  "releve": "2026-09-01",
+  "sources": [
+    "GET /rest/api/3/project/search sur vuproject.atlassian.net, 2026-09-01",
+    "01_CONTEXTE/JIRA_ET_CHANTIERS.md (amorce le 2026-08-26)"
+  ],
+
+  "tenants": {
+    "_lisez_moi": "Deux instances Atlassian SANS AUCUN lien entre elles : deux jeux d'identifiants, deux referentiels de projets, deux numerotations de tickets. SUPPLY-3527 n'a aucun rapport avec un ticket de meme numero cote webfacto. Ne jamais melanger les resultats des deux dans un meme tableau sans la colonne tenant.",
+    "PROJET": {
+      "site": "https://vuproject.atlassian.net",
+      "cloud_id": "d02c7c4b-4d86-4324-98fa-90ef9b5f0db9",
+      "label": "vuproject - l'instance Vente-unique (metier)",
+      "alias": ["vuproject", "vu", "projet", "projets", "vente unique", "vente-unique", "metier", "supply", "interne"],
+      "porte": "Le travail metier : SUPPLY (chantiers supply chain et transport), VUD (service desk d'exploitation VU Delivery), plus dix autres projets hors perimetre L&T.",
+      "cloud_id_releve_le": "2026-09-01"
+    },
+    "WF": {
+      "site": "https://webfacto.atlassian.net",
+      "cloud_id": "",
+      "label": "webfacto - l'instance de la WebFacto (developpement)",
+      "alias": ["webfacto", "wf", "web facto", "facto", "dev", "developpement", "developpeurs"],
+      "porte": "Le travail de l'equipe de developpeurs internes. Referentiel de projets NON RELEVE a ce jour : aucun acces API a cette instance au moment de la construction du connecteur. Appelle jira_projects avec tenant=WF pour le decouvrir, et verse ce que tu trouves dans 01_CONTEXTE/JIRA_ET_CHANTIERS.md.",
+      "cloud_id_releve_le": ""
+    }
+  },
+
+  "projets": {
+    "_lisez_moi": "Cles de projet de l'instance PROJET, relevees par l'API le 2026-09-01. Douze projets visibles. Deux seulement portent le perimetre Logistique & Transport, et il ne faut pas les confondre : SUPPLY porte les CHANTIERS, VUD porte les INCIDENTS d'expedition.",
+    "SUPPLY": {
+      "nom": "Supply_Chain",
+      "type": "business",
+      "perimetre": "L&T - les chantiers : lancements transporteur et pays, integrations, etudes, plans de transport, rentabilite des agences, facturation, douane.",
+      "types_de_ticket": ["Epic", "Tache", "Sous-tache"],
+      "hierarchie": "Epic (niveau 1) puis Tache (niveau 0) puis Sous-tache (niveau -1)",
+      "volume_indicatif": "1 687 tickets crees depuis le 2026-01-01, dont 117 epics [releve le 2026-08-26, ordre de grandeur date]",
+      "c_est_ici_que": "on lit l'avancement d'un chantier transport. JIRA fait foi, la bibliotheque porte le pourquoi."
+    },
+    "VUD": {
+      "nom": "Vente Unique Delivery",
+      "type": "service_desk",
+      "perimetre": "L&T - service desk d'exploitation : une expedition en incident vaut un ticket. Un seul type, Assistance.",
+      "types_de_ticket": ["Assistance"],
+      "volume_indicatif": "3 898 tickets crees depuis le 2026-01-01 [releve le 2026-08-26]",
+      "attention": "Le titre d'un ticket VUD n'est pas une phrase, c'est une REFERENCE D'EXPEDITION. Voir conventions_titres.VUD - sans la cle de lecture, la liste est illisible."
+    },
+    "LB2B": {
+      "nom": "Logistique B2B",
+      "type": "business",
+      "perimetre": "Logistique B2B - l'activite donnee en developpement par ENTITES.md. A connaitre, hors perimetre transport BtoC.",
+      "types_de_ticket": ["Tache", "Sous-tache", "Dossier Affretement"]
+    },
+    "DATA": {
+      "nom": "DATA",
+      "type": "business",
+      "perimetre": "Les demandes data et Power BI. A connaitre : un chiffre transport indisponible finit souvent en ticket DATA.",
+      "types_de_ticket": ["Tache", "Sous-tache"]
+    },
+    "SCVU": {
+      "nom": "Service Client Fullfilment",
+      "type": "service_desk",
+      "perimetre": "Service client des clients fulfillment. A connaitre, hors perimetre.",
+      "types_de_ticket": ["Assistance"]
+    },
+    "SER": {
+      "nom": "Service_Client",
+      "type": "business",
+      "perimetre": "Service client Vente-unique. Hors perimetre L&T.",
+      "types_de_ticket": ["Epic", "Tache", "Sous-tache"]
+    },
+    "BR": { "nom": "Pole UXUI", "type": "business", "perimetre": "Hors perimetre L&T." },
+    "DES": { "nom": "WIP - NE PAS UTILISER - DESIGN UXUI", "type": "software", "perimetre": "Projet mort. Son nom le dit : ne rien y chercher." },
+    "ET": { "nom": "Eye of the Tiger", "type": "business", "perimetre": "Hors perimetre L&T." },
+    "NAVIGATION": { "nom": "Navigation", "type": "business", "perimetre": "Attributs et catalogue produit. Hors perimetre L&T." },
+    "OPSS": { "nom": "OP Paques Semaine Sainte", "type": "business", "perimetre": "Operation commerciale. Hors perimetre L&T." },
+    "STUD": { "nom": "Studio", "type": "software", "perimetre": "Hors perimetre L&T." }
+  },
+
+  "conventions_titres": {
+    "_lisez_moi": "Reconnaitre la forme d'un titre fait gagner un aller-retour : elle dit de quelle famille releve le ticket, donc quel filtre poser.",
+    "VUD": {
+      "forme": "[PREFIXE] puis AAMMJJ puis sequence, tiret, numero d'expedition, tiret, CODE PRESTATION",
+      "exemple": "HF2607050041-736648-LM",
+      "lecture": "HF vaut famille Habitat ; 260705 vaut le 5 juillet 2026 ; 0041 est la sequence du jour ; 736648 est le numero d'expedition ; LM est le code de prestation (livraison avec montage).",
+      "prefixes": {
+        "(aucun)": "Vente-unique France - le cas majoritaire",
+        "HF": "famille Habitat, France [a confirmer]",
+        "HB": "famille Habitat, autre pays [a confirmer]",
+        "HE": "famille Habitat, autre pays [a confirmer]",
+        "BE": "Belgique",
+        "LU": "Luxembourg",
+        "VP": "[a confirmer]"
+      },
+      "codes_prestation": ["LX", "LC", "LS", "LD", "LM", "ED", "CP"],
+      "attention": "LX est le plus frequent dans le flux d'assistance. Ce n'est PAS le mix de livraison reel : celui-la se lit dans Power BI, pas dans une file de tickets.",
+      "hors_format": "Des references en LDP, SMA, BRA, JAC, LEX, ou DERSNACFG1 existent en petit nombre. Probablement des clients fulfillment ou des places de marche [a confirmer]."
+    },
+    "SUPPLY": {
+      "[FR - VUD7xxx] et [NL - VUD8xxx]": "Ouverture ou changement de prestataire d'une agence VU Delivery",
+      "[PAYS] Lancement pays": "Lancement transport d'un pays",
+      "TIL - ...": "Le chantier Tracking Information Log",
+      "Atlas - ...": "Le programme Atlas",
+      "SCALIA et SCALIA Log": "DEUX perimetres differents, voir VOCABULAIRE.md",
+      "[Claude] et [MD Claude]": "Les chantiers d'automatisation avec Claude",
+      "WF - TICKET SPOT MOIS": "Epic mensuel recurrent, receptacle des demandes ponctuelles adressees a la WebFacto. Un par mois. Attention : il vit dans SUPPLY sur l'instance PROJET, ce n'est pas l'instance webfacto."
+    },
+    "agences_vud": {
+      "_lisez_moi": "Les codes d'agence VUD sont une numerotation, pas un nom. Releves dans les titres d'epics 2026.",
+      "VUD7103": "Montbeugny",
+      "VUD7113": "Marseille",
+      "VUD7131": "Toulouse",
+      "VUD7133": "Bordeaux",
+      "VUD7157": "Luxembourg",
+      "VUD7169": "Lyon",
+      "VUD8120": "Amsterdam",
+      "note": "La serie 71xx semble couvrir le perimetre France au sens JIRA (Luxembourg compris) et 81xx les Pays-Bas. [a confirmer]"
+    }
+  },
+
+  "chantiers": {
+    "_lisez_moi": "Points d'entree par theme, sur l'instance PROJET, projet SUPPLY. L'ETAT D'AVANCEMENT SE LIT DANS JIRA, jamais ici. Une cle citee ici est un point de depart, pas une reponse.",
+    "lancements_pays": {
+      "resume": "Le transport Habitat se lance pays par pays en 2026, un epic par pays, un transporteur nomme.",
+      "epics": {
+        "SUPPLY-3174": "Norvege et Suede - Bring et Posten Bring",
+        "SUPPLY-3176": "Suede - Bring et Posten Bring",
+        "SUPPLY-3163": "Portugal - Habitat, risque de bascule XPO vers TAMDIS",
+        "SUPPLY-3145": "Pologne - Rhenus",
+        "SUPPLY-3175": "Danemark - RTC",
+        "SUPPLY-2969": "Finlande",
+        "SUPPLY-3477": "TAMDIS Portugal",
+        "SUPPLY-3361": "Appel d'offres Portugal"
+      },
+      "a_savoir": "Deux epics nordiques nomment explicitement Bring ET Posten Bring comme deux transporteurs distincts : Posten Bring livre la Norvege, Bring la Suede."
+    },
+    "atlas": {
+      "resume": "Atlas n'est pas ne sous ce nom. La filiation explique le perimetre.",
+      "genealogie": {
+        "SUPPLY-2625": "SCALIA Log : integration des communications transporteurs (MVP), fevrier 2026",
+        "SUPPLY-3085": "SCALIA Log V2, avril 2026",
+        "SUPPLY-3418": "Atlas - harmonisation des process coordinateurs",
+        "SUPPLY-3527": "Atlas - CADRAGE DU BESOIN, juin 2026. Le document le plus dense du corpus JIRA : a lire avant toute question sur Atlas.",
+        "SUPPLY-3536": "Atlas MVP - espace conversationnel",
+        "SUPPLY-3537": "Atlas V1 - automatisations",
+        "SUPPLY-3538": "Atlas V2 - ecosysteme",
+        "SUPPLY-3781": "Integrer VUD dans Atlas",
+        "SUPPLY-3913": "Integrer Fulfillment dans Atlas"
+      }
+    },
+    "til": {
+      "resume": "TIL vaut Tracking Information Log. La chaine de tracking de bout en bout.",
+      "epics": {
+        "SUPPLY-3931": "Recuperation du tracking par transporteur - porte le tiering",
+        "SUPPLY-3738": "Robustification",
+        "SUPPLY-3739": "Tracking au colis",
+        "SUPPLY-3740": "Statuts finaux dans la frise FF",
+        "SUPPLY-3741": "Page de tracking client",
+        "SUPPLY-3744": "Incidents FF au niveau colis",
+        "SUPPLY-3742": "Tracking VUD"
+      },
+      "tiering": {
+        "A": ["GLS", "VIR", "VUD", "SwissPost"],
+        "B": ["TAMDIS", "Rhenus Italie", "AIT", "Bring"],
+        "C": ["les autres"],
+        "attention": "C'est un ORDRE DE PRIORITE pour le chantier tracking, PAS un classement de volume. Ne jamais le servir comme un top 10."
+      }
+    },
+    "agences_vud": {
+      "SUPPLY-2234": "Marge VUD KO, plan d'action rentabilite",
+      "SUPPLY-2710": "Etude economique VUD France",
+      "SUPPLY-3350": "Rentabilite toutes agences",
+      "SUPPLY-3351": "Etude Leipzig"
+    },
+    "plans_de_transport": {
+      "SUPPLY-3524": "Refonte du plan France 2026",
+      "SUPPLY-3621": "Refonte du plan Espagne 2026"
+    },
+    "facturation": {
+      "SUPPLY-3590": "Problemes de facturation VUD",
+      "SUPPLY-3941": "Prefacturation VUD",
+      "SUPPLY-3986": "Surcharge gazole dans les previsions middle mile"
+    },
+    "si_et_integrations": {
+      "SUPPLY-3813": "Etude d'internalisation d'un TMS porte par le BO-Fulfillment, pour reduire la dependance a TELIAE. Direction strategique, pas un projet lance.",
+      "SUPPLY-3348": "Shiptify dans le BOFF",
+      "SUPPLY-3349": "Peripass dans le BOFF",
+      "SUPPLY-3238": "Mapping Cresus",
+      "SUPPLY-3079": "Webhook TELIAE",
+      "SUPPLY-3710": "Montee de version des stations TELIAE"
+    },
+    "claude": {
+      "SUPPLY-2910": "Automatisation des taches avec Claude Cowork",
+      "SUPPLY-3837": "[Claude] Base de connaissance T&L - LE ticket du chantier du cerveau commun. C'est lui qu'on renseigne pour l'avancement, pas un fichier de la bibliotheque.",
+      "SUPPLY-3806": "Skill EDI Geodis"
+    }
+  },
+
+  "statuts": {
+    "_lisez_moi": "Les libelles de statut sont propres a chaque projet et a chaque instance, et un filtre sur un libelle inexistant fait ECHOUER la requete. La CATEGORIE de statut, elle, est universelle sur Jira Cloud : trois valeurs, les memes partout. C'est donc elle qu'on filtre par defaut, et jira_statuses qui donne les libelles reels quand la question porte dessus.",
+    "categories": {
+      "To Do": "a faire, non demarre",
+      "In Progress": "en cours",
+      "Done": "termine, resolu, ferme, livre"
+    },
+    "traduction": {
+      "ouvert": "statusCategory != Done",
+      "ouverts": "statusCategory != Done",
+      "actif": "statusCategory != Done",
+      "en cours": "statusCategory = \"In Progress\"",
+      "encours": "statusCategory = \"In Progress\"",
+      "demarre": "statusCategory = \"In Progress\"",
+      "a faire": "statusCategory = \"To Do\"",
+      "nouveau": "statusCategory = \"To Do\"",
+      "backlog": "statusCategory = \"To Do\"",
+      "termine": "statusCategory = Done",
+      "termines": "statusCategory = Done",
+      "fini": "statusCategory = Done",
+      "resolu": "statusCategory = Done",
+      "ferme": "statusCategory = Done",
+      "clos": "statusCategory = Done",
+      "livre": "statusCategory = Done",
+      "tout": "",
+      "tous": ""
+    }
+  },
+
+  "periodes": {
+    "_lisez_moi": "JQL accepte les dates relatives (-7d, -4w, startOfWeek()) et les dates absolues entre guillemets. Le connecteur traduit ces mots ; il REFUSE une periode qu'il ne sait pas traduire plutot que de l'ignorer en silence.",
+    "aujourd hui": "startOfDay()",
+    "ce jour": "startOfDay()",
+    "hier": "-1d",
+    "cette semaine": "startOfWeek()",
+    "semaine derniere": "startOfWeek(-1w)",
+    "la semaine derniere": "startOfWeek(-1w)",
+    "ce mois": "startOfMonth()",
+    "mois dernier": "startOfMonth(-1M)",
+    "le mois dernier": "startOfMonth(-1M)",
+    "cette annee": "startOfYear()",
+    "7 jours": "-7d",
+    "8 jours": "-8d",
+    "15 jours": "-15d",
+    "30 jours": "-30d",
+    "60 jours": "-60d",
+    "90 jours": "-90d",
+    "3 mois": "-13w",
+    "6 mois": "-26w",
+    "12 mois": "-52w",
+    "un an": "-52w"
+  },
+
+  "jql": [
+    {
+      "intention": "Les chantiers transport ouverts",
+      "jql": "project = SUPPLY AND issuetype = Epic AND statusCategory != Done ORDER BY updated DESC",
+      "note": "L'epic est le bon grain pour une question de chantier. La tache est du detail d'execution."
+    },
+    {
+      "intention": "Ce qui a bouge cette semaine sur les chantiers",
+      "jql": "project = SUPPLY AND updated >= startOfWeek() ORDER BY updated DESC",
+      "note": "A preferer a un filtre sur created pour une revue hebdo : ce qui compte est ce qui a AVANCE."
+    },
+    {
+      "intention": "Mes tickets",
+      "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+      "note": "currentUser() evite de resoudre un accountId. Un filtre par personne nommee, lui, exige l'accountId : voir jira_user_lookup."
+    },
+    {
+      "intention": "Les tickets d'un epic",
+      "jql": "parent = SUPPLY-3527 ORDER BY created ASC",
+      "note": "Sur les projets modernes, parent couvre l'epic. Sur un projet classique ancien, l'ancien champ est Epic Link : le connecteur essaie les deux."
+    },
+    {
+      "intention": "Un incident d'expedition, par numero",
+      "jql": "project = VUD AND summary ~ \"736648\" ORDER BY created DESC",
+      "note": "Le numero d'expedition est DANS le titre. Le tilde est un contient : il ne prend pas de joker en debut de mot."
+    },
+    {
+      "intention": "Les incidents d'expedition Habitat du mois",
+      "jql": "project = VUD AND summary ~ \"HF*\" AND created >= startOfMonth() ORDER BY created DESC",
+      "note": "Sur des milliers de tickets, prefere jira_summary a une liste : compter n'est pas lister."
+    },
+    {
+      "intention": "Le chantier tracking",
+      "jql": "project = SUPPLY AND summary ~ \"TIL\" ORDER BY key ASC",
+      "note": "TIL vaut Tracking Information Log."
+    },
+    {
+      "intention": "Les lancements pays",
+      "jql": "project = SUPPLY AND issuetype = Epic AND summary ~ \"Lancement\" ORDER BY created DESC"
+    },
+    {
+      "intention": "Ce qui traine : ouvert et sans mouvement depuis un mois",
+      "jql": "project = SUPPLY AND statusCategory != Done AND updated <= -30d ORDER BY updated ASC",
+      "note": "La question la plus utile d'une revue de portefeuille, et celle que personne ne pose."
+    },
+    {
+      "intention": "Les demandes spot adressees a la WebFacto",
+      "jql": "project = SUPPLY AND summary ~ \"WF - TICKET SPOT\" ORDER BY created DESC",
+      "note": "Attention : ces epics vivent dans SUPPLY, sur l'instance PROJET. Ce ne sont pas les tickets de l'instance webfacto."
+    }
+  ],
+
+  "pieges": {
+    "deux_instances": "Une cle de ticket n'a de sens que dans son instance. Toujours dire de laquelle vient un chiffre.",
+    "compter_n_est_pas_lister": "L'API de recherche moderne de Jira Cloud ne rend AUCUN total : elle pagine par jeton. Un compte s'obtient donc en parcourant les pages, et le connecteur dit toujours s'il a atteint son plafond. Un compte annonce sans cette mention n'est pas citable.",
+    "assignee_par_nom": "Sur Jira Cloud, un filtre assignee sur un nom d'affichage ne marche pas : il faut l'accountId. jira_user_lookup le donne.",
+    "libelles_de_statut": "Ne jamais deviner un libelle de statut. Filtrer sur statusCategory, ou lire les libelles reels avec jira_statuses.",
+    "description_adf": "La description d'un ticket est stockee en ADF (JSON structure). Le connecteur la rend en texte ; une description longue est tronquee, et il le dit.",
+    "avancement": "Aucun avancement ne se recopie dans la bibliotheque d'equipe. JIRA fait foi sur les statuts et les dates, la bibliotheque porte le pourquoi et les decisions."
+  }
+}

@@ -45,6 +45,7 @@ Une variable d'environnement non vide gagne toujours sur le fichier.
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import io
 import json
@@ -53,7 +54,9 @@ import pathlib
 import re
 import sqlite3
 import sys
+import threading
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
@@ -62,6 +65,8 @@ from mcp.server.fastmcp import FastMCP
 
 API_TIMEOUT_S = 120.0
 TOKEN_TIMEOUT_S = 60.0
+
+LEXIQUE_FILE = pathlib.Path(__file__).resolve().parent / "lexique.json"
 DEFAULT_BASE_URL = "https://eu1.getyooz.com"
 API_ROOT = "/yooz/v2/api"
 # Pages du data report : plafonnees a 1 000 elements par l'API, valeur prise
@@ -138,6 +143,194 @@ SUMMARY_COLUMNS = [
     "blockingCause",
     "YZ_PORTAL_STATUS",
 ]
+
+
+# --------------------------------------------------------------------------
+# Le lexique metier et la resolution des tiers
+# --------------------------------------------------------------------------
+#
+# Pourquoi ce bloc existe, en une mesure du 2026-08-28. Le code tiers stocke par
+# Yooz n'est pas « HVIR » mais « HVIR           (H) », avec son remplissage
+# d'espaces et son suffixe de lettre. Et la grille de recherche du portail
+# n'accepte que la forme EXACTE : sur la periode 01/01 au 27/08/2026, societe
+# Vente-Unique, `third_code='HVIR'` rend ZERO document en HTTP 200, et
+# `third_code='HVIR           (H)'` rend 24 documents pour 3 142 015,68 EUR TTC.
+#
+# Zero document se lit comme « ce transporteur ne nous a rien facture ». Rien ne
+# signale l'erreur. Un code tiers ne doit donc jamais etre compose a la main :
+# il est resolu contre le cache, qui porte les codes tels que Yooz les ecrit.
+#
+# Deuxieme piege que ce bloc couvre : un tiers n'est pas facture par les deux
+# societes. VIR est chez Vente-Unique, TAMDIS chez DistriService. Interroger la
+# mauvaise societe rend zero, sans rien dire non plus.
+
+_LEXIQUE: dict[str, Any] | None = None
+_LEXIQUE_ERROR: str = ""
+
+
+def _norm(text: Any) -> str:
+    """Forme comparable d'un libelle : sans accent, sans casse, sans ponctuation."""
+    raw = unicodedata.normalize("NFKD", str(text or ""))
+    raw = "".join(c for c in raw if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
+
+
+def _lexique() -> dict[str, Any]:
+    """Le lexique livre avec le connecteur. Ne leve jamais."""
+    global _LEXIQUE, _LEXIQUE_ERROR
+    if _LEXIQUE is None:
+        try:
+            _LEXIQUE = json.loads(LEXIQUE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _LEXIQUE_ERROR = f"{LEXIQUE_FILE} illisible : {exc}"
+            _LEXIQUE = {}
+    return _LEXIQUE
+
+
+def _alias(terme: str) -> dict[str, Any] | None:
+    """L'entree de lexique d'un terme, en suivant les renvois 'memeque'."""
+    table = _lexique().get("alias") or {}
+    index = {_norm(k): v for k, v in table.items() if not k.startswith("_")}
+    entry = index.get(_norm(terme))
+    for _ in range(4):
+        if not isinstance(entry, dict) or "memeque" not in entry:
+            break
+        entry = index.get(_norm(entry["memeque"]))
+    return entry if isinstance(entry, dict) else None
+
+
+def _label_to_key(label: str) -> str:
+    """La cle de societe qui correspond a un libelle du cache ('Vente-Unique')."""
+    for key, comp in _companies().items():
+        if _norm(comp.label) == _norm(label):
+            return key
+    return ""
+
+
+def _resolve_third(terme: str, dataset: str = DEFAULT_DATASET) -> dict[str, Any]:
+    """Traduit un nom maison en codes tiers EXACTS, lus dans le cache.
+
+    Rend toujours un dictionnaire. Le cache est la bonne source pour ca : il
+    porte les codes tels que Yooz les ecrit, il repond en quelques
+    millisecondes, et il ne consomme pas d'appel API. Son seul defaut - il ne
+    connait pas un fournisseur apparu depuis la derniere synchro - est signale
+    dans la reponse.
+    """
+    out: dict[str, Any] = {
+        "terme": (terme or "").strip(),
+        "canonique": (terme or "").strip(),
+        "motifs": [],
+        "candidats": [],
+        "societes": [],
+        "notes": [],
+        "connu_du_lexique": False,
+    }
+    if not out["terme"]:
+        return out
+
+    entry = _alias(out["terme"])
+    if entry:
+        out["connu_du_lexique"] = True
+        out["canonique"] = entry.get("canonique") or out["terme"]
+        out["motifs"] = list(entry.get("motifs") or [out["terme"]])
+        for key in ("note", "attention", "source"):
+            if entry.get(key):
+                out["notes"].append(f"{key} : {entry[key]}")
+    else:
+        out["motifs"] = [out["terme"]]
+
+    table = _table_of(dataset)
+    try:
+        conn = _open_ro()
+    except YoozError as exc:
+        out["notes"].append(
+            f"Cache indisponible, resolution impossible : {exc} "
+            "Sans cache, passe par third_name (filtre cote client sur le "
+            "libelle) plutot que par un code compose a la main."
+        )
+        return out
+    try:
+        cols = _table_columns(conn, table)
+        if "thirdPartyCode" not in cols:
+            out["notes"].append(
+                f"La table '{table}' du cache ne porte pas thirdPartyCode : "
+                "resolution impossible."
+            )
+            return out
+        clauses = " OR ".join(
+            "LOWER(COALESCE(thirdPartyName,'')) LIKE ?" for _ in out["motifs"]
+        )
+        params = tuple(f"%{m.lower()}%" for m in out["motifs"])
+        rows = conn.execute(
+            f"SELECT source_app, thirdPartyCode, thirdPartyName, COUNT(*) nb, "
+            f"MAX(YZ_DATE_YZ_COMMONS) derniere "
+            f"FROM {_quote(table)} WHERE ({clauses}) "
+            f"AND COALESCE(thirdPartyCode,'') != '' "
+            f"GROUP BY 1, 2, 3 ORDER BY nb DESC",
+            params,
+        ).fetchall()
+    except sqlite3.Error as exc:
+        out["notes"].append(f"Cache interrogeable mais requete refusee : {exc}")
+        return out
+    finally:
+        conn.close()
+
+    for row in rows:
+        out["candidats"].append(
+            {
+                "societe": row["source_app"],
+                "code": row["thirdPartyCode"],
+                "libelle": row["thirdPartyName"],
+                "documents_en_cache": row["nb"],
+                "derniere_facture": row["derniere"],
+            }
+        )
+    out["societes"] = sorted({c["societe"] for c in out["candidats"]})
+
+    if not out["candidats"]:
+        out["notes"].append(
+            f"Aucun tiers du cache ne correspond a « {out['terme']} ». Deux "
+            "lectures possibles, et elles ne se confondent pas : le "
+            "fournisseur n'a jamais facture sur le perimetre synchronise, ou "
+            "il est apparu depuis la derniere synchro. Verifie la fraicheur "
+            "avec yooz_status, relance yooz_sync si besoin, et ne conclus pas "
+            "a une absence de facturation sur ce seul resultat."
+        )
+    elif len(out["candidats"]) > 1:
+        out["notes"].append(
+            f"{len(out['candidats'])} entites portent ce nom. Les additionner "
+            "est une DECISION, pas un automatisme : regarde les libelles, ils "
+            "peuvent designer des pays ou des perimetres differents."
+        )
+    if len(out["societes"]) > 1:
+        out["notes"].append(
+            "Ce tiers est facture par PLUSIEURS societes ("
+            + ", ".join(out["societes"])
+            + ") : un total qui n'en couvre qu'une est partiel."
+        )
+    return out
+
+
+def _third_codes_of(res: dict[str, Any]) -> str:
+    """Les codes exacts a passer a la grille, prets a concatener."""
+    return ",".join(c["code"] for c in res.get("candidats") or [])
+
+
+def _third_header(res: dict[str, Any]) -> str:
+    """Ce que la resolution a produit, a afficher dans l'entete de la reponse."""
+    lines = [
+        f"Tiers « {res['terme']} » -> {res['canonique']} : "
+        f"{len(res['candidats'])} code(s) exact(s) resolu(s) depuis le cache."
+    ]
+    for cand in res["candidats"]:
+        lines.append(
+            f"    {cand['societe']:<14} {cand['code']!r}  {cand['libelle']}  "
+            f"({cand['documents_en_cache']} doc. en cache, derniere le "
+            f"{cand['derniere_facture']})"
+        )
+    for note in res["notes"]:
+        lines.append("    " + note)
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------
@@ -578,11 +771,26 @@ def _engine_roots() -> list[pathlib.Path]:
 
 
 def _shared_env_candidates() -> list[pathlib.Path]:
-    """Emplacements du fichier d'equipe essayes, dans l'ordre."""
+    """Emplacements du fichier d'equipe essayes, dans l'ordre.
+
+    **Un chemin explicite est EXCLUSIF.** Avant le 2026-08-28, la variable
+    d'environnement etait ajoutee en tete puis la recherche continuait sous le
+    profil : pointer un fichier precis ne desactivait donc pas le fichier
+    d'equipe reel, il le mettait juste en second. Consequence mesuree, et elle
+    n'est pas theorique : la suite de controles hors-ligne pointe un fichier
+    inexistant pour simuler un poste sans configuration d'equipe, et elle
+    tournait en fait avec les vraies cles - sept controles echouaient sur la
+    machine de celui qui developpe, c'est-a-dire la seule ou la suite est
+    lancee. Un garde-fou qui echoue toujours finit par etre ignore.
+
+    Le meme piege vaut en exploitation : qui pointe un fichier de recette
+    attend ce fichier, pas un repli silencieux sur la configuration de
+    production.
+    """
     out: list[pathlib.Path] = []
     explicit = _clean(os.environ.get("YOOZ_SHARED_ENV"))
     if explicit:
-        out.append(pathlib.Path(explicit))
+        return [pathlib.Path(explicit)]
     for root in _engine_roots():
         out.append(root.joinpath(*SHARED_SUBPATH, SHARED_FILE_NAME))
     return out
@@ -956,11 +1164,36 @@ def _get_token(company: Company, force: bool = False) -> str:
 # Appels API
 # --------------------------------------------------------------------------
 
+_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+
+
+def _client() -> httpx.Client:
+    """Le client HTTP du processus, partage et garde ouvert.
+
+    Un `httpx.get` par appel rouvre la connexion TLS a chaque page. Sur une
+    synchronisation de cinquante pages, ou sur la grille interrogee pour deux
+    societes de front, ca se voit. httpx.Client est sur en usage concurrent,
+    c'est ce qui permet le fan-out de _grid_run.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        with _CLIENT_LOCK:
+            if _CLIENT is None:
+                _CLIENT = httpx.Client(
+                    timeout=API_TIMEOUT_S,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=8, max_connections=16
+                    ),
+                )
+    return _CLIENT
+
+
 def _api_get(company: Company, path: str, params: dict[str, Any] | None = None) -> Any:
     url = path if path.startswith("http") else f"{_base_url()}{path}"
 
     def call() -> httpx.Response:
-        return httpx.get(
+        return _client().get(
             url,
             params=params,
             headers={
@@ -968,7 +1201,6 @@ def _api_get(company: Company, path: str, params: dict[str, Any] | None = None) 
                 "Authorization": f"Bearer {_get_token(company)}",
                 "applicationId": company.application_id,
             },
-            timeout=API_TIMEOUT_S,
         )
 
     resp = call()
@@ -1043,7 +1275,7 @@ def _api_post(company: Company, path: str, body: Any) -> Any:
     url = path if path.startswith("http") else f"{_base_url()}{path}"
 
     def call() -> httpx.Response:
-        return httpx.post(
+        return _client().post(
             url,
             json=body,
             headers={
@@ -1052,7 +1284,6 @@ def _api_post(company: Company, path: str, body: Any) -> Any:
                 "Authorization": f"Bearer {_get_token(company)}",
                 "applicationId": company.application_id,
             },
-            timeout=API_TIMEOUT_S,
         )
 
     resp = call()
@@ -1415,7 +1646,13 @@ def _to_csv(
     max_rows: int | None = None,
     cell_limit: int = 300,
     columns: list[str] | None = None,
+    total: int | None = None,
 ) -> str:
+    """Rend des lignes en CSV. `total` est le VRAI nombre de lignes du perimetre.
+
+    Quand il est fourni et qu'il depasse ce qui est affiche, c'est LUI qu'on
+    annonce : le nombre de lignes affichees n'est pas un volume.
+    """
     if not rows:
         return "(0 ligne)"
     cols = list(columns or [])
@@ -1431,13 +1668,16 @@ def _to_csv(
     for row in shown:
         writer.writerow([_shorten(row.get(c, ""), cell_limit) for c in cols])
     out = buf.getvalue().rstrip("\n")
-    if max_rows is not None and len(rows) > max_rows:
+    reel = total if total is not None else len(rows)
+    if max_rows is not None and reel > max_rows:
         out += (
-            f"\n\n[tronque : {len(rows)} lignes, {max_rows} affichees. Affine le "
-            f"filtre, ou passe par yooz_export_csv pour tout recuperer.]"
+            f"\n\n[ATTENTION : la requete rend {reel} ligne(s) AU TOTAL, "
+            f"{max_rows} sont affichees. Le nombre de lignes affichees n'est PAS "
+            f"un volume : c'est {reel} qui l'est. Affine le filtre, agrege dans "
+            f"la requete, ou passe par yooz_export_csv pour tout recuperer.]"
         )
     else:
-        out += f"\n\n[{len(shown)} ligne(s)]"
+        out += f"\n\n[{len(shown)} ligne(s) - perimetre complet]"
     return out
 
 
@@ -1464,11 +1704,25 @@ def _guard_sql(sql: str) -> str:
     return stripped
 
 
-def _select(sql: str, params: tuple = (), limit: int = 200) -> list[dict]:
+def _select(sql: str, params: tuple = (), limit: int = 200) -> tuple[list[dict], int]:
+    """Execute une requete bornee. Rend (lignes, total_reel).
+
+    Le total reel n'est pas un luxe. Avant le 2026-08-28, cette fonction rendait
+    limit+1 lignes et le rendu annoncait « tronque : 101 lignes, 100 affichees »
+    - alors que la requete en comptait peut-etre cinquante mille. Le message
+    rassurait au lieu d'alerter, et 101 finissait cite comme un volume.
+
+    On lit donc une ligne de plus pour savoir s'il en reste, et quand il en
+    reste on demande le VRAI compte a SQLite, qui le calcule sans rapatrier.
+    """
     conn = _open_ro()
     try:
         cur = conn.execute(f"SELECT * FROM ({sql}) LIMIT {int(limit) + 1}", params)
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+        if len(rows) <= int(limit):
+            return rows, len(rows)
+        total = conn.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0]
+        return rows[: int(limit)], int(total)
     except sqlite3.Error as exc:
         raise YoozError(f"SQL refuse par SQLite : {exc}\nRequete : {sql}") from exc
     finally:
@@ -1759,15 +2013,46 @@ def yooz_columns(dataset: str = DEFAULT_DATASET, fill_rate: bool = True) -> str:
             if not fill_rate or not total:
                 lines.extend(cols)
                 return "\n".join(lines)
+
+            # Le taux de remplissage coute une requete a soixante SUM(CASE...) :
+            # c'est le seul appel du cache qui se sent. Il ne change qu'a la
+            # synchronisation, on le garde donc en memoire sous une empreinte
+            # qui melange le volume et les horodatages de synchro - si l'un des
+            # deux bouge, le calcul est refait.
+            signature = f"{total}|" + "|".join(
+                str(r[1])
+                for r in conn.execute(
+                    "SELECT key, value FROM _meta WHERE key LIKE ? ORDER BY key",
+                    (f"last_sync:{table}:%",),
+                )
+            )
+            memo_key = f"fillrate:{table}"
+            memo = _meta_get(conn, memo_key)
+            if memo.startswith(signature + "\n"):
+                return "\n".join(lines) + memo[len(signature) + 1 :]
+
             expr = ", ".join(
                 f"SUM(CASE WHEN {_quote(c)} IS NULL OR {_quote(c)} = '' THEN 0 ELSE 1 END)"
                 for c in cols
             )
             counts = conn.execute(f"SELECT {expr} FROM {_quote(table)}").fetchone()
+            body: list[str] = []
             for col, filled in zip(cols, counts):
                 kind = "num" if col in NUMERIC_COLUMNS else "txt"
-                lines.append(f"  {col:<52} {kind}  {100 * (filled or 0) / total:5.1f}% rempli")
-            return "\n".join(lines)
+                body.append(f"  {col:<52} {kind}  {100 * (filled or 0) / total:5.1f}% rempli")
+            rendu = "\n".join(body)
+            try:
+                writer = _open_rw()
+                try:
+                    _meta_set(writer, memo_key, signature + "\n" + rendu)
+                    writer.commit()
+                finally:
+                    writer.close()
+            except sqlite3.Error:
+                # Le cache du profilage est un confort : s'il ne s'ecrit pas,
+                # on rend quand meme le resultat.
+                pass
+            return "\n".join(lines) + rendu
         finally:
             conn.close()
     except (ConfigError, YoozError) as exc:
@@ -1791,8 +2076,8 @@ def yooz_sql(sql: str, max_rows: int = 100) -> str:
     """
     try:
         clean = _guard_sql(sql)
-        rows = _select(clean, limit=int(max_rows))
-        return _to_csv(rows, max_rows=int(max_rows))
+        rows, total = _select(clean, limit=int(max_rows))
+        return _to_csv(rows, max_rows=int(max_rows), total=total)
     except (ConfigError, YoozError) as exc:
         return _fail(exc)
 
@@ -1873,8 +2158,8 @@ def yooz_invoices(
             + (" WHERE " + " AND ".join(where) if where else "")
             + " ORDER BY YZ_DATE_YZ_COMMONS DESC"
         )
-        rows = _select(sql, tuple(params), limit=int(max_rows))
-        return _to_csv(rows, max_rows=int(max_rows), columns=cols)
+        rows, total = _select(sql, tuple(params), limit=int(max_rows))
+        return _to_csv(rows, max_rows=int(max_rows), columns=cols, total=total)
     except (ConfigError, YoozError) as exc:
         return _fail(exc)
 
@@ -1902,7 +2187,7 @@ def yooz_invoice(number: str, company: str = "", dataset: str = DEFAULT_DATASET)
             labels = [c.label for c in _resolve_companies(company)]
             where.append("source_app IN (" + ",".join("?" for _ in labels) + ")")
             params.extend(labels)
-        rows = _select(
+        rows, _total = _select(
             f"SELECT * FROM {_quote(table)} WHERE " + " AND ".join(where), tuple(params), limit=5
         )
         if not rows:
@@ -1984,8 +2269,8 @@ def yooz_summary(
             + (" WHERE " + " AND ".join(where) if where else "")
             + " GROUP BY 1 ORDER BY 3 DESC"
         )
-        rows = _select(sql, tuple(params), limit=int(max_rows))
-        return _to_csv(rows, max_rows=int(max_rows))
+        rows, total = _select(sql, tuple(params), limit=int(max_rows))
+        return _to_csv(rows, max_rows=int(max_rows), total=total)
     except (ConfigError, YoozError) as exc:
         return _fail(exc)
 
@@ -2006,6 +2291,9 @@ def yooz_export_csv(sql: str, filename: str = "", max_rows: int = 200000) -> str
             cur = conn.execute(clean)
             cols = [d[0] for d in cur.description]
             rows = cur.fetchmany(int(max_rows))
+            # Un export qui s'arrete pile a max_rows est indiscernable d'un
+            # export complet : on regarde s'il restait une ligne.
+            reste = cur.fetchone() is not None
         except sqlite3.Error as exc:
             raise YoozError(f"SQL refuse par SQLite : {exc}") from exc
         finally:
@@ -2024,7 +2312,16 @@ def yooz_export_csv(sql: str, filename: str = "", max_rows: int = 200000) -> str
             writer = csv.writer(handle, delimiter=";", quoting=csv.QUOTE_MINIMAL)
             writer.writerow(cols)
             writer.writerows(rows)
-        return f"{len(rows)} ligne(s) ecrite(s) dans {path}"
+        note = f"{len(rows)} ligne(s) ecrite(s) dans {path}"
+        if reste:
+            note += (
+                f"\n\nATTENTION : la requete rendait PLUS de {max_rows} lignes. "
+                "Le fichier est TRONQUE et ne represente pas le perimetre "
+                "demande : releve max_rows, ou resserre la requete."
+            )
+        else:
+            note += "\nResultat complet : la requete ne rendait pas plus de lignes."
+        return note
     except (ConfigError, YoozError) as exc:
         return _fail(exc)
 
@@ -2645,10 +2942,24 @@ def _grid_run(
             f"max_rows est plafonne a {GRID_MAX_ROWS} lignes sur ce chemin direct. "
             f"Au-dela, passe par le cache : yooz_sync puis yooz_export_csv."
         )
+    societes = _resolve_companies(company)
+
+    def fetch(comp: Company) -> tuple[Company, list[dict], bool]:
+        got, truncated = _grid_fetch(comp, filters, columns, grid_id, int(max_rows))
+        return comp, got, truncated
+
+    # Deux societes = deux jeux d'identifiants et deux appels independants :
+    # les enchainer en serie doublait le temps de toute question posee sur le
+    # groupe entier.
+    if len(societes) <= 1:
+        results = [fetch(c) for c in societes]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(societes)) as pool:
+            results = list(pool.map(fetch, societes))
+
     rows: list[dict] = []
     notes: list[str] = []
-    for comp in _resolve_companies(company):
-        got, truncated = _grid_fetch(comp, filters, columns, grid_id, int(max_rows))
+    for comp, got, truncated in results:
         rows.extend(got)
         if truncated:
             notes.append(
@@ -2723,6 +3034,7 @@ def yooz_live_columns(company: str = "", grid_id: str = "", filterable: bool = F
 
 @mcp.tool()
 def yooz_live_invoices(
+    third: str = "",
     third_code: str = "",
     third_name: str = "",
     date_from: str = "",
@@ -2748,9 +3060,15 @@ def yooz_live_invoices(
     centaines de lignes et n'a pas besoin d'un fichier. Le cache reste le chemin
     de l'historique large et du SQL libre.
 
-    third_code   code du tiers au referentiel ('FGLS'), plusieurs separes par une
-                 virgule. C'est le SEUL filtre tiers que Yooz applique ici :
-                 recupere le code avec yooz_referential (famille fournisseur).
+    third        LE parametre a utiliser : un nom maison ('VIR', 'TAMDIS',
+                 'GLS'). Le connecteur resout lui-meme le ou les codes EXACTS
+                 dans le cache, et restreint la ou les societes qui facturent ce
+                 tiers. C'est ce qui evite le piege du code approche : Yooz
+                 stocke 'HVIR           (H)' et non 'HVIR', et la grille rend
+                 ZERO document en HTTP 200 sur une forme approchee.
+    third_code   le code au referentiel, a l'EXACT, espaces et suffixe compris.
+                 A ne renseigner que si l'on veut contourner la resolution.
+                 yooz_resolve_third donne la forme exacte.
     third_name   filtre de secours sur le libelle, applique cote client sur les
                  lignes rendues. A combiner toujours avec une periode.
     date_from / date_to  date de facture (AAAA-MM-JJ), bornes incluses.
@@ -2767,6 +3085,27 @@ def yooz_live_invoices(
     seules, qu'il faut additionner.
     """
     try:
+        res = _resolve_third(third) if third.strip() else None
+        entete_tiers = ""
+        if res:
+            entete_tiers = _third_header(res)
+            codes = _third_codes_of(res)
+            if codes:
+                third_code = (third_code + "," if third_code.strip() else "") + codes
+                if not company.strip() and res["societes"]:
+                    company = ",".join(
+                        k for k in (_label_to_key(l) for l in res["societes"]) if k
+                    )
+            else:
+                # Aucun code resolu : on retombe sur le filtre de libelle, cote
+                # client, et on le DIT - sinon la reponse aurait l'air d'un
+                # filtre serveur alors qu'elle n'en est pas un.
+                third_name = third_name or res["terme"]
+                entete_tiers += (
+                    "\n    Aucun code exact resolu : repli sur un filtre de "
+                    "libelle applique COTE CLIENT. Sur un resultat tronque, il "
+                    "ne donne pas un compte."
+                )
         filters = _grid_build_filters(
             third_code=third_code,
             date_from=date_from,
@@ -2793,7 +3132,10 @@ def yooz_live_invoices(
         )
         shown = ["source_app"] + wanted + ["amountSigned", "totalAmountSigned"]
         body = _to_csv(rows, max_rows=int(max_rows), columns=shown)
-        return _grid_header(rows, notes, filters) + "\n\n" + body
+        head = _grid_header(rows, notes, filters)
+        if entete_tiers:
+            head += "\n" + entete_tiers
+        return head + "\n\n" + body
     except (ConfigError, AuthError, YoozError) as exc:
         return _fail(exc)
 
@@ -2801,6 +3143,7 @@ def yooz_live_invoices(
 @mcp.tool()
 def yooz_live_summary(
     group_by: str = "mois",
+    third: str = "",
     third_code: str = "",
     third_name: str = "",
     date_from: str = "",
@@ -2823,11 +3166,34 @@ def yooz_live_summary(
     sur la periode". Les avoirs sont comptes en negatif - la grille les rend en
     positif - et leur part est isolee pour que le chiffre soit citable.
 
+    third     LE parametre a utiliser pour un tiers : un nom maison ('VIR',
+              'TAMDIS'). Le connecteur resout le ou les codes EXACTS dans le
+              cache et restreint la ou les societes concernees. Passer un code
+              approche a la main rend ZERO document sans erreur - c'est le piege
+              principal de cette API.
     group_by  'mois' (defaut), 'aucun' pour un total unique, ou un code de
               colonne de la grille : thirdPartyName, orgUnitName,
               documentTypeName, portalStatus, currency, source_app...
     """
     try:
+        res = _resolve_third(third) if third.strip() else None
+        entete_tiers = ""
+        if res:
+            entete_tiers = _third_header(res)
+            codes = _third_codes_of(res)
+            if codes:
+                third_code = (third_code + "," if third_code.strip() else "") + codes
+                if not company.strip() and res["societes"]:
+                    company = ",".join(
+                        k for k in (_label_to_key(l) for l in res["societes"]) if k
+                    )
+            else:
+                third_name = third_name or res["terme"]
+                entete_tiers += (
+                    "\n    Aucun code exact resolu : repli sur un filtre de "
+                    "libelle applique COTE CLIENT. Sur un resultat tronque, il "
+                    "ne donne pas un compte."
+                )
         filters = _grid_build_filters(
             third_code=third_code,
             date_from=date_from,
@@ -2908,6 +3274,8 @@ def yooz_live_summary(
             "ttc_avoirs": round(sum(s["ttc_avoirs"] for s in out), 2),
         }
         head = _grid_header(rows, notes, filters)
+        if entete_tiers:
+            head += "\n" + entete_tiers
         head += (
             "\nAvoirs comptes en negatif. 'ht' et 'ttc' viennent des colonnes "
             "signees ; 'nb_avoirs' et 'ttc_avoirs' isolent leur part."
@@ -2920,6 +3288,138 @@ def yooz_live_summary(
             + json.dumps(total, ensure_ascii=False)
         )
     except (ConfigError, AuthError, YoozError) as exc:
+        return _fail(exc)
+
+
+# --------------------------------------------------------------------------
+# Le vocabulaire maison, expose comme outil
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+def yooz_lexique(sujet: str = "") -> str:
+    """Le vocabulaire maison que ce connecteur comprend, et ses pieges.
+
+    A appeler avant de composer un filtre tiers a la main, et avant de conclure
+    qu'un transporteur n'a rien facture.
+
+    sujet filtre l'affichage : 'code', 'societes', 'alias', 'colonnes',
+    'questions'. Vide = tout.
+    """
+    try:
+        lex = _lexique()
+        if not lex:
+            raise YoozError(
+                f"Lexique indisponible. {_LEXIQUE_ERROR or 'fichier absent'}. Le "
+                "connecteur fonctionne quand meme, mais il ne traduit plus les "
+                "noms maison : passe par yooz_resolve_third, qui lit le cache."
+            )
+        want = _norm(sujet)
+        lines = [
+            f"Lexique du connecteur yooz-factures, version {lex.get('version')} "
+            f"(mis a jour le {lex.get('updated')} par {lex.get('updated_by')}).",
+            "",
+        ]
+
+        if not want or want.startswith("code") or want.startswith("piege"):
+            bloc = lex.get("le_piege_du_code_tiers") or {}
+            lines.append("== Le piege du code tiers ==")
+            for note in bloc.get("_pourquoi", []):
+                lines.append("  " + note)
+            lines.append(f"  REGLE : {bloc.get('regle')}")
+            lines.append(f"  OPERATEURS : {bloc.get('operateurs')}")
+            lines.append("")
+
+        if not want or want.startswith("societe"):
+            bloc = lex.get("societes") or {}
+            lines.append("== Societes ==")
+            for note in bloc.get("_pourquoi", []):
+                lines.append("  " + note)
+            for key, val in bloc.items():
+                if not key.startswith("_"):
+                    lines.append(f"  {key:<16} {val}")
+            lines.append("")
+
+        if not want or want.startswith("alias") or want.startswith("transporteur"):
+            bloc = lex.get("alias") or {}
+            lines.append("== Alias et motifs de recherche ==")
+            for note in bloc.get("_pourquoi", []):
+                lines.append("  " + note)
+            for name, entry in sorted(bloc.items()):
+                if name.startswith("_") or not isinstance(entry, dict):
+                    continue
+                if "memeque" in entry:
+                    lines.append(f"  {name:<16} -> voir « {entry['memeque']} »")
+                    continue
+                lines.append(
+                    f"  {name:<16} {entry.get('canonique')} | motifs "
+                    f"{', '.join(entry.get('motifs') or [])}"
+                )
+                if entry.get("note"):
+                    lines.append(f"                   {entry['note']}")
+                if entry.get("attention"):
+                    lines.append(f"                   ATTENTION : {entry['attention']}")
+            lines.append("")
+
+        if not want or want.startswith("colonne"):
+            bloc = lex.get("colonnes") or {}
+            lines.append("== Colonnes ==")
+            for key, val in bloc.items():
+                if not key.startswith("_"):
+                    lines.append(f"  {key:<28} {val}")
+            lines.append("")
+
+        if not want or want.startswith("question"):
+            lines.append("== Questions courantes et outil a employer ==")
+            for item in lex.get("questions_frequentes") or []:
+                lines.append(f"  « {item['question']} »")
+                lines.append(f"      {item['outil']} : {item['appel']}")
+            lines.append("")
+
+        return "\n".join(lines)
+    except (ConfigError, YoozError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def yooz_resolve_third(terme: str, dataset: str = DEFAULT_DATASET) -> str:
+    """Traduit un nom maison en code(s) tiers EXACT(s), et dit quelle societe.
+
+    A APPELER AVANT TOUT FILTRE TIERS. Le code stocke par Yooz porte un
+    remplissage d'espaces et un suffixe ('HVIR           (H)'), et la grille de
+    recherche n'accepte que la forme exacte : un code approche rend ZERO
+    document en HTTP 200, ce qui se lit comme une absence de facturation.
+
+    Les outils yooz_live_invoices et yooz_live_summary acceptent directement le
+    parametre `third` avec un nom maison et font cette resolution eux-memes.
+    Cet outil sert a la VOIR, ou a lever une ambiguite avant de trancher.
+    """
+    try:
+        res = _resolve_third(terme, dataset)
+        lines = [
+            f"« {res['terme']} » -> {res['canonique']}",
+            f"  connu du lexique : {'oui' if res['connu_du_lexique'] else 'non'}",
+            f"  motifs cherches  : {', '.join(res['motifs'])}",
+            "",
+        ]
+        if res["candidats"]:
+            lines.append("Codes exacts a passer dans third_code :")
+            for cand in res["candidats"]:
+                lines.append(
+                    f"  {cand['code']!r}\n"
+                    f"      societe   : {cand['societe']}\n"
+                    f"      libelle   : {cand['libelle']}\n"
+                    f"      en cache  : {cand['documents_en_cache']} document(s), "
+                    f"derniere facture le {cand['derniere_facture']}"
+                )
+            lines.append("")
+            lines.append(
+                "A copier TEL QUEL, espaces et suffixe compris. La forme "
+                "abregee rend zero document sans erreur."
+            )
+        for note in res["notes"]:
+            lines.append("  " + note)
+        return "\n".join(lines)
+    except (ConfigError, YoozError) as exc:
         return _fail(exc)
 
 
