@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "gisco",
+  "displayName": "GISCO - referentiel geographique europeen (lecture seule)",
+  "version": "1.0.0",
+  "description": "Interroge le referentiel geographique d'Eurostat (GISCO) en lecture seule : pays, regions NUTS 0 a 3, 98 000 communes LAU, villes et zones urbaines fonctionnelles, 830 000 codes postaux europeens avec leur commune, leur NUTS3 et leur degre d'urbanisation. Rattachement d'un point a sa commune et a sa region par test geometrique, hors ligne. Le versant britannique, sorti de GISCO apres le Brexit, est charge depuis l'ONS dans les memes tables, et chaque reponse dit de quelle source vient chaque ligne. Cache local SQLite interrogeable en SQL, export CSV sur demande. Les millesimes ne sont pas ecrits en dur : le connecteur decouvre ce qu'Eurostat publie, confronte le nom du fichier a la liste publiee et signale les couches du cache en retard. Aucune cle a saisir : GISCO est un service public ouvert. 20 outils.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "gisco",
+    "eurostat",
+    "geographie",
+    "nuts",
+    "lau",
+    "commune",
+    "code-postal",
+    "zonage",
+    "transport",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.gisco-mcp/exports. Ce reglage est LOCAL par nature : un chemin valable ici n'existe pas sur les autres postes, et il ne peut donc pas venir d'une configuration d'equipe. N'y mets jamais un dossier de la bibliotheque partagee : un CSV depose dans un dossier synchronise part chez tout le monde. Le connecteur refuse d'ecrire dans un chemin qui ressemble a OneDrive ou SharePoint.",
+      "required": false
+    },
+    "home": {
+      "type": "directory",
+      "title": "Racine locale du connecteur (optionnel)",
+      "description": "Ou vivent le cache SQLite et les fichiers telecharges. Par defaut ~/.gisco-mcp. A ne changer que si le disque du profil est trop petit : le cache complet, codes postaux compris, pese environ 250 Mo, et les fichiers telecharges 300 Mo de plus. N'utilise jamais un dossier synchronise, sous peine de faire remonter 550 Mo dans le drive d'equipe.",
+      "required": false
+    },
+    "max_download_mb": {
+      "type": "string",
+      "title": "Plafond de telechargement, en Mo (optionnel)",
+      "description": "Au-dela de ce poids, une synchronisation est refusee tant qu'on ne la confirme pas. Par defaut 400, ce qui laisse passer la plus grosse couche connue (les codes postaux, 200 Mo) et arrete une couche inattendue. A relever seulement si Eurostat publie plus lourd.",
+      "required": false
+    },
+    "autosync_max_mb": {
+      "type": "string",
+      "title": "Rapatriement automatique sous ce poids, en Mo (optionnel)",
+      "description": "Les couches plus legeres que ce seuil sont rapatriees toutes seules a la premiere question qui en a besoin - les NUTS pesent 1,5 Mo, les pays 1 Mo. Au-dela, la synchronisation reste un geste demande, parce qu'elle ecrit sur le disque. Par defaut 6. Mets 0 pour exiger que TOUTE synchronisation soit demandee explicitement.",
+      "required": false
+    }
+  }
+}

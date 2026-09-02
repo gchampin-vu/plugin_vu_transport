@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "indices": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "INDICES_GASOIL_TLS": "${user_config.gasoil_tls}",
+        "INDICES_GASOIL_FILE": "${user_config.gasoil_file}",
+        "INDICES_GASOIL_URL": "${user_config.gasoil_url}",
+        "INDICES_PAYS_DEFAUT": "${user_config.pays_defaut}",
+        "INDICES_EXPORT_DIR": "${user_config.export_dir}"
+      }
+    }
+  }
+}

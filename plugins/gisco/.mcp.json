@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "gisco": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "GISCO_HOME": "${user_config.home}",
+        "GISCO_EXPORT_DIR": "${user_config.export_dir}",
+        "GISCO_MAX_DOWNLOAD_MB": "${user_config.max_download_mb}",
+        "GISCO_AUTOSYNC_MAX_MB": "${user_config.autosync_max_mb}"
+      }
+    }
+  }
+}

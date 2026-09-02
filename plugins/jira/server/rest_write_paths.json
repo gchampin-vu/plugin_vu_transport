@@ -1,0 +1,44 @@
+{
+  "_lisez_moi": "Liste blanche des chemins d'ECRITURE de l'API REST Jira Cloud v3 que ce connecteur accepte d'appeler, avec le VERBE autorise. Elle joue pour l'ecriture le role que rest_get_paths.json joue pour la lecture : ce qui n'est pas ici est refuse, meme si Atlassian l'expose. La cle est « VERBE /chemin » : le verbe fait partie de l'autorisation, parce que PUT /issue/{k} met a jour et DELETE /issue/{k} detruit - le meme chemin, deux gestes qui n'ont rien a voir. AUCUN DELETE N'EST EXPOSE, et ce n'est pas un oubli : voir non_exposes.",
+  "api_version": "Jira Cloud platform REST API v3",
+  "source": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/",
+  "released": "2026-09-02",
+  "racine": "/rest/api/3",
+  "paths": {
+    "POST /issue": {
+      "summary": "Cree un ticket. Le type (Epic, Tache, Sous-tache) est un ID resolu sur l'instance, jamais un nom devine.",
+      "outil": "jira_creer_ticket",
+      "corps": "fields obligatoires : project.key, issuetype.id, summary. Une sous-tache exige en plus parent.key.",
+      "attention": "NON IDEMPOTENT. Deux appels creent deux tickets : ce connecteur ne rejoue donc JAMAIS un POST /issue, meme sur une coupure reseau."
+    },
+    "PUT /issue/{issueIdOrKey}": {
+      "summary": "Met a jour les champs d'un ticket existant. Ne change PAS le statut - un statut se bouge par une transition.",
+      "outil": "jira_maj_ticket",
+      "corps": "fields pour remplacer une valeur, update pour un geste incremental (add / remove sur les etiquettes).",
+      "attention": "Un champ pose dans `fields` REMPLACE la valeur existante. Sur une description, c'est un ecrasement : le connecteur affiche la taille de l'existant avant de confirmer."
+    },
+    "POST /issue/{issueIdOrKey}/comment": {
+      "summary": "Ajoute un commentaire. Le corps est en ADF, construit par le serveur a partir du texte donne.",
+      "outil": "jira_commenter_ticket",
+      "attention": "NON IDEMPOTENT : deux appels posent deux commentaires. Jamais rejoue."
+    },
+    "POST /issue/{issueIdOrKey}/transitions": {
+      "summary": "Fait franchir une transition au ticket - c'est la SEULE facon de changer un statut. La transition est resolue sur les transitions reellement disponibles pour ce ticket, lues juste avant.",
+      "outil": "jira_transition_ticket",
+      "attention": "Une transition peut declencher des automatisations et des notifications cote Jira, et elle est visible de toute l'equipe. C'est le geste le plus engageant de ce connecteur."
+    }
+  },
+  "non_exposes": {
+    "_lisez_moi": "Chemins d'ecriture qui existent cote Atlassian et que ce connecteur n'expose PAS. La regle : on ouvre ce qui repond a un besoin nomme, on n'ouvre pas une surface « au cas ou ». Un geste absent d'ici se fait dans l'interface JIRA, ou s'ajoute apres discussion - ce n'est pas une limite d'API.",
+    "DELETE /issue/{issueIdOrKey}": "SUPPRIMER un ticket est irreversible et emporte ses commentaires, ses pieces jointes et son historique. Aucun besoin ne le justifie : un ticket qui n'a pas lieu d'etre se ferme ou s'annule par une transition, ce qui garde la trace.",
+    "DELETE /issue/{issueIdOrKey}/comment/{id}": "idem : un commentaire faux se corrige par un commentaire qui rectifie, pas par un effacement silencieux.",
+    "PUT /issue/{issueIdOrKey}/assignee": "l'affectation passe par PUT /issue/{k} avec le champ assignee. Deux chemins pour le meme geste, c'est un chemin de trop.",
+    "POST /issue/{issueIdOrKey}/worklog": "declarer du temps passe engage un pointage. Hors besoin exprime.",
+    "POST /issue/{issueIdOrKey}/attachments": "deposer une piece jointe suppose d'envoyer un binaire multipart depuis le poste, et de decider ce qui sort du poste vers un systeme partage. Hors perimetre.",
+    "POST /issueLink": "creer un lien entre tickets. A ouvrir quand le besoin sera nomme.",
+    "POST /issue/bulk": "creation en masse. Une erreur de gabarit y produit cinquante tickets faux d'un coup, et il n'existe pas de suppression en masse cote connecteur pour les reprendre.",
+    "PUT /project/{projectIdOrKey}": "toucher a la configuration d'un projet n'est pas un geste d'exploitation.",
+    "POST /field": "creer un champ personnalise modifie le referentiel de l'instance pour tout le monde. Cadrage Webfacto.",
+    "POST /webhook": "brancher un webhook cree un flux permanent vers l'exterieur. Cadrage Webfacto obligatoire."
+  }
+}

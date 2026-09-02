@@ -207,8 +207,13 @@ Puis clos en quatre lignes, pas plus :
    « les chantiers transport ouverts » (`/jira-projet`), « ce qui a bouge cette
    semaine cote webfacto » (`/jira-wf`), « exporte les incidents VUD du mois »
    (`/jira-projet-export`) ;
-3. le connecteur est en **lecture seule** - il ne cree aucun ticket, ne commente
-   pas, ne fait avancer aucun statut ;
+3. le connecteur lit largement et **ecrit quatre gestes bornes** - creer un
+   ticket, mettre a jour ses champs, commenter, franchir une transition - et
+   **rien ne part sans confirmer=True** : l'appel sans confirmation affiche le
+   corps exact, l'instance et le compte qui signera, puis s'arrete. Aucun DELETE
+   n'est expose. Dis-lui aussi que le jeton, lui, autorise l'ecriture cote
+   Atlassian quoi qu'il arrive : la vraie protection est le provisionnement du
+   compte, pas ce code ;
 4. **JIRA fait foi sur l'avancement.** Rien de ce que le connecteur affiche ne
    se recopie dans la base de connaissance d'equipe : elle porte le pourquoi, pas
    les statuts.

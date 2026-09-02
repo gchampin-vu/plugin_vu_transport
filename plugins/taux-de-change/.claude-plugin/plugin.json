@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "taux-de-change",
+  "displayName": "Taux de change DGFiP (lecture seule)",
+  "version": "1.0.0",
+  "description": "Donne le taux de change de chancellerie DGFiP en vigueur a une date, sur 189 devises, depuis l'open data data.economie.gouv.fr. Resout les pieges du jeu de donnees plutot que de les laisser produire des chiffres faux : un taux n'est republie que quand il change, donc filtrer sur le mois courant rend 44 devises sur 189 et l'absence de la livre se lit comme \"pas de taux\" ; le jeu porte une ligne par couple devise/pays, donc compter les lignes ne compte pas des devises ; l'historique annonce depuis 1990 ne devient exploitable qu'a l'ete 2005. Conversion dans les deux sens avec la date d'effet du taux utilise, historique par devise, agregation cote serveur, export CSV sans plafond de pagination. Aucune cle d'API, aucune mise en service : jeu de donnees public, Licence Ouverte Etalab v2.0. 9 outils et une competence.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "taux-de-change",
+    "devise",
+    "dgfip",
+    "chancellerie",
+    "open-data",
+    "facturation",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.taux-de-change-mcp/exports. Jamais dans la bibliotheque d'equipe : un CSV pose dans un dossier synchronise part chez tout le monde.",
+      "required": false
+    },
+    "base_url": {
+      "type": "string",
+      "title": "Racine de l'API (optionnel)",
+      "description": "Laisse vide. La valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/taux.shared.env. A ne renseigner que pour pointer un miroir ou un portail Opendatasoft different sur ce poste.",
+      "required": false
+    },
+    "dataset": {
+      "type": "string",
+      "title": "Identifiant du jeu de donnees (optionnel)",
+      "description": "Laisse vide : dgfip-taux-de-change. A ne renseigner que si la DGFiP republie le jeu sous un autre identifiant.",
+      "required": false
+    },
+    "shared_env": {
+      "type": "string",
+      "title": "Chemin du fichier de configuration d'equipe (optionnel)",
+      "description": "Laisse vide : le connecteur cherche 08_ENGINE/04_mcp/00_config/taux.shared.env tout seul, et fonctionne parfaitement sans - il n'y a aucun secret ni reglage d'equipe a distribuer. Renseigner un chemin ici est EXCLUSIF : la recherche automatique est alors desactivee, ce qui sert a pointer un fichier de recette sans risquer un repli silencieux sur celui de production.",
+      "required": false
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "taux": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "TAUX_EXPORT_DIR": "${user_config.export_dir}",
+        "TAUX_BASE_URL": "${user_config.base_url}",
+        "TAUX_DATASET": "${user_config.dataset}",
+        "TAUX_SHARED_ENV": "${user_config.shared_env}"
+      }
+    }
+  }
+}

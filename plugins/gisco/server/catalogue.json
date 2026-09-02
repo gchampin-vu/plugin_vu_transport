@@ -1,0 +1,260 @@
+{
+  "_lisez_moi": [
+    "Catalogue des couches connues du connecteur.",
+    "",
+    "Il ne fige PAS les millesimes. GISCO ouvre de nouveaux millesimes et renomme",
+    "ses fichiers sans prevenir : une liste d'annees ecrite en dur vieillit, et le",
+    "jour ou elle vieillit le connecteur refuse un millesime qui existe pourtant.",
+    "Ce fichier decrit donc des MOTIFS de noms de fichiers, et le connecteur",
+    "decouvre les millesimes reellement publies chez Eurostat, en deux appels :",
+    "datasets.json pour la liste des editions, puis le fichier d'index de",
+    "l'edition pour la liste des GeoPackage.",
+    "",
+    "Par defaut, une synchronisation prend LE DERNIER MILLESIME PUBLIE. La",
+    "decouverte est mise en cache localement (une semaine par defaut,",
+    "GISCO_CATALOGUE_TTL_JOURS) pour ne pas rappeler Eurostat a chaque question.",
+    "",
+    "'annees_connues' n'est qu'un FILET DE SECOURS, utilise seulement quand le",
+    "reseau ne repond pas. Il n'a pas besoin d'etre a jour, et il ne fait jamais",
+    "autorite contre ce qui est publie."
+  ],
+
+  "racine": "https://gisco-services.ec.europa.eu",
+
+  "pieges": {
+    "PT_n_est_pas_le_Portugal": [
+      "Dans un nom de fichier GISCO, les deux lettres qui suivent le nom du jeu",
+      "designent le TYPE DE GEOMETRIE, pas un pays : RG = region (polygone),",
+      "BN = boundary (limite), LB = label (point d'etiquette), PT = point.",
+      "PCODE_PT_2025_4326 est donc l'ensemble des codes postaux EUROPEENS en",
+      "geometrie ponctuelle - 830 032 codes sur 34 pays - et surtout pas les",
+      "codes postaux du Portugal. La confusion est facile et elle est couteuse :",
+      "elle fait croire que GISCO ne publie qu'un pays."
+    ],
+    "guillemets_dans_le_pcode": [
+      "Dans le jeu pcode, les colonnes CODE et NUTS3_<annee> arrivent entourees de",
+      "guillemets litteraux ('\"NL366\"' et non 'NL366'). Une jointure sur la valeur",
+      "brute rend zero ligne, sans erreur. Le connecteur les retire au chargement."
+    ],
+    "royaume_uni_absent": [
+      "Le Royaume-Uni est sorti du perimetre NUTS et LAU apres le Brexit : GISCO ne",
+      "le publie plus. L'equivalent britannique vient de l'ONS - LAD pour les",
+      "communes, ITL3 pour les NUTS3, ONSPD pour les codes postaux - et le",
+      "connecteur sait les charger dans les MEMES tables, avec source='ONS'.",
+      "Toute reponse dit de quelle source vient chaque ligne."
+    ],
+    "distance_a_vol_d_oiseau": [
+      "gisco_distance rend une orthodromie. Ce n'est pas un kilometrage routier :",
+      "l'ecart courant est de 20 a 30 %, davantage des qu'il y a un relief, un",
+      "fleuve ou un bras de mer. Pour un cout de transport, c'est un ordre de",
+      "grandeur, jamais une base de facturation."
+    ],
+    "le_dernier_millesime_n_est_pas_le_plus_complet": [
+      "VERIFIE LE 2026-09-01, et c'est la raison pour laquelle « toujours le",
+      "dernier » ne peut pas etre une regle aveugle : au millesime LAU 2024, la",
+      "population vaut 0 pour la FRANCE ENTIERE (34 946 communes) et pour",
+      "l'ESPAGNE ENTIERE (8 132 communes). Au millesime 2023, la France n'a que 6",
+      "communes sans population et l'Espagne une seule.",
+      "Le dernier millesime est le meilleur DECOUPAGE - c'est le plus recent. Il",
+      "n'est pas forcement le mieux RENSEIGNE : Eurostat publie la geometrie avant",
+      "les attributs.",
+      "Consequence pratique : pour une question de POPULATION sur la France ou",
+      "l'Espagne, charger explicitement le millesime 2023 -",
+      "gisco_sync(couche='lau', annee='2023'). Le connecteur previent tout seul",
+      "quand la population est vide sur tout le perimetre demande.",
+      "Un zero n'est jamais une population : c'est une absence de mesure."
+    ]
+  },
+
+  "couches": {
+    "nuts": {
+      "titre": "NUTS - decoupage statistique europeen, niveaux 0 a 3",
+      "source": "GISCO",
+      "table": "nuts",
+      "cle": "nuts_id",
+      "jeu": "nuts",
+      "gabarit": "NUTS_RG_{resolution}_{annee}_4326.gpkg",
+      "gabarit_niveau": "NUTS_RG_{resolution}_{annee}_4326_LEVL_{niveau}.gpkg",
+      "motif_fichier": "^NUTS_RG_(?P<resolution>[0-9]+[A-Z])_(?P<annee>[0-9]{4})_4326\\.gpkg$",
+      "motif_fichier_niveau": "^NUTS_RG_(?P<resolution>[0-9]+[A-Z])_(?P<annee>[0-9]{4})_4326_LEVL_(?P<niveau>[0-9])\\.gpkg$",
+      "resolution_preferee": ["20M", "60M", "10M", "03M", "01M"],
+      "annees_connues": ["2024", "2021", "2016", "2013", "2010", "2006", "2003"],
+      "colonnes": {
+        "nuts_id": "NUTS_ID",
+        "levl_code": "LEVL_CODE",
+        "cntr_code": "CNTR_CODE",
+        "name_latn": "NAME_LATN",
+        "nuts_name": "NUTS_NAME",
+        "mount_type": "MOUNT_TYPE",
+        "urbn_type": "URBN_TYPE",
+        "coast_type": "COAST_TYPE"
+      },
+      "remarque": "La resolution est un niveau de simplification du trait, pas un millesime : 60M est le plus grossier, 01M le plus fin et le plus lourd. Pour savoir DANS QUELLE region tombe un point, 20M suffit et pese 1,5 Mo ; 01M ne change la reponse qu'a quelques centaines de metres d'une frontiere. C'est pourquoi la resolution preferee par defaut est 20M, et non la plus fine."
+    },
+
+    "lau": {
+      "titre": "LAU - communes (Local Administrative Units)",
+      "source": "GISCO",
+      "table": "lau",
+      "cle": "gisco_id",
+      "jeu": "lau",
+      "gabarit": "LAU_RG_{resolution}_{annee}_4326.gpkg",
+      "motif_fichier": "^LAU_RG_(?P<resolution>[0-9]+[A-Z])_(?P<annee>[0-9]{4})_4326\\.gpkg$",
+      "resolution_preferee": ["01M"],
+      "annees_connues": ["2024", "2023", "2022", "2021", "2020", "2019", "2018", "2017", "2016"],
+      "colonnes": {
+        "gisco_id": "GISCO_ID",
+        "cntr_code": "CNTR_CODE",
+        "lau_name": "LAU_NAME",
+        "lau_id": "LAU_ID",
+        "pop": "POP_{annee}",
+        "pop_dens": "POP_DENS_{annee}",
+        "area_km2": "AREA_KM2"
+      },
+      "motifs_colonnes": {
+        "pop": "^POP_[0-9]{4}$",
+        "pop_dens": "^POP_DENS_[0-9]{4}$"
+      },
+      "remarque": "97 987 communes au millesime 2024. Le fichier pese 75 Mo en GeoPackage contre 150 Mo en GeoJSON - c'est la raison du choix du format. La colonne LAU_ID a disparu du millesime 2024 : le connecteur retombe alors sur la partie de GISCO_ID qui suit le trait de soulignement (AL_AL141 -> AL141). Sur la population, lis le piege 'le_dernier_millesime_n_est_pas_le_plus_complet' AVANT de repondre."
+    },
+
+    "pcode": {
+      "titre": "Codes postaux europeens, geometrie ponctuelle",
+      "source": "GISCO",
+      "table": "pcode",
+      "cle": "pc_cntr",
+      "jeu": "pcode",
+      "gabarit": "PCODE_PT_{annee}_4326.gpkg",
+      "motif_fichier": "^PCODE_PT_(?P<annee>[0-9]{4})_4326\\.gpkg$",
+      "resolution_preferee": [],
+      "annees_connues": ["2025", "2024", "2020"],
+      "colonnes": {
+        "postcode": "POSTCODE",
+        "cntr_id": "CNTR_ID",
+        "lau_name": "LAU_NAME",
+        "lau_id": "GISCO_2021",
+        "nuts3": "NUTS3_{annee}",
+        "dgurba": "DGURBA",
+        "fua_id": "FUA_ID",
+        "city_id": "CITY_ID",
+        "pc_cntr": "PC_CNTR"
+      },
+      "motifs_colonnes": {
+        "nuts3": "^NUTS3_[0-9]{4}$",
+        "lau_id": "^GISCO_[0-9]{4}$"
+      },
+      "remarque": "PT = POINT, pas Portugal : voir pieges. 830 032 codes sur 34 pays au millesime 2025. Le millesime NUTS porte par la colonne NUTS3_<annee> ne suit PAS celui du jeu - le fichier 2025 porte NUTS3_2024 - et c'est pourquoi cette colonne est retrouvee par MOTIF et non par calcul. Chaque code porte sa commune, son NUTS3, sa zone urbaine fonctionnelle et son degre d'urbanisation : c'est de loin la couche la plus utile pour un zonage de transport."
+    },
+
+    "urau": {
+      "titre": "Urban Audit - villes et zones urbaines fonctionnelles",
+      "source": "GISCO",
+      "table": "urau",
+      "cle": "urau_code",
+      "jeu": "urau",
+      "gabarit": "URAU_RG_{resolution}_{annee}_4326.gpkg",
+      "motif_fichier": "^URAU_RG_(?P<resolution>[0-9]+[A-Z])_(?P<annee>[0-9]{4})_4326\\.gpkg$",
+      "resolution_preferee": ["100K"],
+      "annees_connues": ["2024", "2021", "2020", "2018"],
+      "colonnes": {
+        "urau_code": "URAU_CODE",
+        "urau_catg": "URAU_CATG",
+        "cntr_code": "CNTR_CODE",
+        "urau_name": "URAU_NAME",
+        "city_cptl": "CITY_CPTL",
+        "fua_code": "FUA_CODE",
+        "area_km2": "AREA_SQM",
+        "nuts3": "NUTS3_{annee}"
+      },
+      "motifs_colonnes": {
+        "nuts3": "^NUTS3_[0-9]{4}$",
+        "area_km2": "^AREA_(SQM|KM2)$"
+      },
+      "remarque": "URAU_CATG vaut C pour la ville au sens administratif, F pour la zone urbaine fonctionnelle (l'aire d'attraction, bassin de main-d'oeuvre compris), K pour le noyau dense. Une livraison « sur Lyon » ne veut pas dire la meme chose selon la categorie retenue : C fait 297 km2, F en fait 4 127. Malgre son nom, AREA_SQM est en kilometres carres."
+    },
+
+    "countries": {
+      "titre": "Pays du monde, avec leur statut UE / AELE",
+      "source": "GISCO",
+      "table": "countries",
+      "cle": "cntr_id",
+      "jeu": "countries",
+      "gabarit": "CNTR_RG_{resolution}_{annee}_4326.gpkg",
+      "motif_fichier": "^CNTR_RG_(?P<resolution>[0-9]+[A-Z])_(?P<annee>[0-9]{4})_4326\\.gpkg$",
+      "resolution_preferee": ["20M", "60M", "10M", "03M", "01M"],
+      "annees_connues": ["2024", "2020", "2016", "2013"],
+      "colonnes": {
+        "cntr_id": "CNTR_ID",
+        "name_engl": "NAME_ENGL",
+        "name_fren": "NAME_FREN",
+        "iso3_code": "ISO3_CODE",
+        "capt": "CAPT",
+        "eu_stat": "EU_STAT",
+        "efta_stat": "EFTA_STAT",
+        "cc_stat": "CC_STAT"
+      },
+      "remarque": "EL pour la Grece et UK pour le Royaume-Uni : GISCO suit la nomenclature Eurostat, pas l'ISO. Un rapprochement avec un referentiel maison en GR ou GB rate ces deux pays en silence."
+    }
+  },
+
+  "couches_uk": {
+    "_lisez_moi": [
+      "Le versant britannique. Memes tables, colonne source='ONS'. Les couches sont",
+      "servies par l'ArcGIS de l'Office for National Statistics, pagine par",
+      "resultOffset.",
+      "",
+      "Ici la decouverte automatique ne s'applique PAS, et ce n'est pas un oubli :",
+      "le nom du service porte son mois de publication (LAD_MAY_2025_UK_BGC_V2),",
+      "l'annuaire de l'ONS ne se parcourt pas comme datasets.json, et les noms de",
+      "CHAMPS changent avec le millesime - LAD25CD deviendra LAD26CD. Un",
+      "changement de millesime britannique se fait donc a la main, ici, et",
+      "gisco_doctor verifie que les services declares repondent encore."
+    ],
+    "racine": "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services",
+    "uk_lad": {
+      "titre": "Local Authority Districts - l'equivalent britannique des LAU",
+      "table": "lau",
+      "chemin": "/LAD_MAY_2025_UK_BGC_V2/FeatureServer/0/query",
+      "champs": "LAD25CD,LAD25NM,Shape__Area",
+      "geometrie": true,
+      "remarque": "Shape__Area est en metres carres dans la projection britannique (EPSG:27700) : on divise par un million pour obtenir des km2. La POPULATION n'est PAS dans cette couche - elle reste vide, et c'est un manque assume, pas un zero."
+    },
+    "uk_itl3": {
+      "titre": "ITL3 - l'equivalent britannique des NUTS3",
+      "table": "nuts",
+      "chemin": "/ITL3_JAN_2025_UK_BGC_V2/FeatureServer/1/query",
+      "champs": "ITL325CD,ITL325NM",
+      "geometrie": true,
+      "remarque": "Les codes ITL commencent par TL la ou les anciens NUTS britanniques commencaient par UK : TLC31 etait UKC31. Un referentiel maison qui porte encore des codes UK ne se rapproche pas tout seul."
+    },
+    "uk_onspd": {
+      "titre": "ONSPD - les codes postaux britanniques",
+      "table": "pcode",
+      "chemin": "/ONSPD_AUG_2025_UK/FeatureServer/0/query",
+      "champs": "pcd8,lad25cd,lat,long,ctry25cd",
+      "geometrie": false,
+      "filtre_actifs": "doterm IS NULL",
+      "remarque": "1,81 million de codes actifs, ramenes par pages de 2 000 - c'est long, et c'est explicite. 'doterm IS NULL' ne garde que les codes VIVANTS ; sans ce filtre on ramene aussi les codes resilies, qui livrent chez personne."
+    },
+    "uk_lookup": {
+      "titre": "Table de correspondance LAD vers ITL3",
+      "table": null,
+      "chemin": "/ITL125_ITL225_ITL325_LAU125_LAD25_UK_LU/FeatureServer/0/query",
+      "champs": "LAD25CD,LAD25NM,ITL325CD",
+      "geometrie": false,
+      "remarque": "Sert a rattacher chaque code postal britannique a son ITL3. A dedupliquer sur LAD25CD avant la jointure : sans cela, la jointure multiplie les lignes et l'export sort des doublons qui ont l'air d'etre des codes postaux."
+    }
+  },
+
+  "dgurba": {
+    "1": "zone densement peuplee (ville)",
+    "2": "zone de densite intermediaire (banlieue, petite ville)",
+    "3": "zone peu peuplee (rural)"
+  },
+
+  "urau_catg": {
+    "C": "ville au sens administratif",
+    "F": "zone urbaine fonctionnelle (aire d'attraction)",
+    "K": "noyau dense de la zone urbaine fonctionnelle"
+  }
+}

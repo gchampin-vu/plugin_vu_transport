@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "jira",
-  "displayName": "JIRA - deux instances (lecture seule)",
+  "displayName": "JIRA - deux instances (lecture, ecriture confirmee)",
   "version": "1.0.0",
-  "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique, en lecture seule : vuproject (metier - SUPPLY, VUD) et webfacto (developpement). Le contexte JIRA est embarque dans le connecteur - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte. Traduction verifiable : le JQL genere est affiche. Agregation cote serveur pour compter, cache local SQLite interrogeable en SQL, export CSV sur demande. 27 outils.",
+  "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique - vuproject (metier - SUPPLY, VUD) et webfacto (developpement) - et sait y ecrire quatre gestes bornes, jamais sans confirmation. Le contexte JIRA est embarque dans le connecteur - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte. Traduction verifiable : le JQL genere est affiche. Agregation cote serveur pour compter, cache local SQLite interrogeable en SQL, export CSV sur demande. ECRITURE : creer un ticket, mettre a jour ses champs, commenter, franchir une transition - liste blanche ou la cle porte le verbe, aucun DELETE expose, rien ne part sans confirmer=True, et le corps exact est affiche avant. 33 outils, dont 4 qui ecrivent.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
   },
@@ -15,7 +15,7 @@
     "vud",
     "webfacto",
     "projets",
-    "lecture-seule"
+    "ecriture-confirmee"
   ],
   "userConfig": {
     "projet_email": {

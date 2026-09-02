@@ -1,0 +1,463 @@
+{
+  "_lisez_moi": [
+    "Contexte maison livre AVEC le connecteur Trustpilot, et charge par le serveur.",
+    "Il sert a trois choses que le modele ne peut pas deviner :",
+    "  1. traduire 'les avis italiens' ou 'Habitat' en business unit Trustpilot ;",
+    "  2. rattacher un pays aux transporteurs qui y livrent, pour lire un verbatim ;",
+    "  3. classer un commentaire par theme dans les onze langues du perimetre.",
+    "Il est dans le serveur et non dans la skill : une skill est lue une fois en",
+    "debut de session, ce fichier est relu a chaque appel d'outil."
+  ],
+  "version": "1.0",
+  "updated": "2026-09-01",
+  "updated_by": "Guillaume_Champin",
+  "connecteur": "trustpilot",
+
+  "a_quoi_sert_ce_connecteur": {
+    "_pourquoi": "Trustpilot n'est pas un outil de transport, mais c'est la seule source ou le client dit lui-meme comment la livraison s'est passee, dans sa langue, avec une note.",
+    "usages_reels_de_l_equipe": [
+      "La note Trustpilot est suivie chaque semaine par le service client, sur FR et Habitat (voir 01_CONTEXTE/DONNEES_ET_INDICATEURS.md). Ce connecteur permet de la sortir sur les dix-huit domaines, pas seulement deux.",
+      "Un signal pays remonte deja par ce canal : le mecontentement Royaume-Uni et Irlande a ete qualifie par un Trustpilot a 3,6 sur la livraison et le service client, et porte en revue avec AIT (voir 07_EQUIPE/Guillaume_Champin/myrddin/03_OPERATIONS/Zone_Europe_Sud_et_Iles_Britanniques.md).",
+      "Le referenceId d'un avis est notre numero de commande : c'est la jointure vers le back-office, Reflex et Shiptify. Un avis a une etoile devient donc une commande, donc un transporteur.",
+      "Le Scorecard Transporteur mesure ce que le transporteur declare. Trustpilot mesure ce que le client a vecu. Les deux ne disent pas la meme chose, et l'ecart est le sujet."
+    ],
+    "ce_que_ce_connecteur_ne_fait_pas": [
+      "Il ne repond pas aux avis, ne pose pas de tag, ne contacte pas un auteur. Ces operations engagent la marque devant un client sur une page publique : elles ne sont pas exposees (voir api_paths.json).",
+      "Il ne remplace pas le Scorecard : un avis est un ressenti declaratif et volontaire, pas une mesure de flux. Le nombre d'avis d'un pays ne dit rien de son volume d'expedition."
+    ]
+  },
+
+  "business_units": {
+    "_pourquoi": "Un domaine = une business unit Trustpilot = un identifiant a 24 caracteres. Le connecteur resout le domaine en identifiant et le garde en cache : les identifiants ne changent pas.",
+    "www.vente-unique.com": {
+      "pays": "FR", "pays_libelle": "France", "enseigne": "Vente-unique", "langues": ["fr"],
+      "transporteurs": ["VIR", "VUD", "GEODIS", "COLISSIMO", "CHRONOPOST", "RELAIS_COLIS", "AGRIKOLIS", "TRED_CHARIOT", "JP_HOME", "MONDIAL_RELAY", "GLS", "TRUSK", "DEALT", "COGEPART"],
+      "note": "Le domaine historique, et de loin le plus gros volume d'avis. Un 'toutes marques confondues' non borne part d'ici."
+    },
+    "www.habitat.fr": {
+      "pays": "FR", "pays_libelle": "France", "enseigne": "Habitat", "langues": ["fr"],
+      "transporteurs": ["VIR", "VUD", "GEODIS", "COLISSIMO", "GLS", "MONDIAL_RELAY"],
+      "note": "Marque distincte, process transport partages. Suivie chaque semaine au meme titre que FR."
+    },
+    "www.habitat-design.com": {
+      "pays": "MULTI", "pays_libelle": "Habitat international (es-es, de-de, de-ch, nl-be, nl-nl, it-it)", "enseigne": "Habitat", "langues": ["es", "de", "nl", "it"],
+      "transporteurs": [],
+      "note": "Un seul domaine pour six locales : le pays d'un avis se lit dans sa langue et dans consumer.displayLocation, pas dans le domaine. Ne pas lui attribuer un pays unique."
+    },
+    "www.kauf-unique.de": {
+      "pays": "DE", "pays_libelle": "Allemagne", "enseigne": "Kauf-unique", "langues": ["de"],
+      "transporteurs": ["DHL_HOME", "DHL_FREIGHT", "LGT", "RTC", "GLS", "CARGOE"],
+      "note": "Enseigne allemande du groupe. Le nom de marque n'est pas 'Vente-unique' : un client allemand parle de Kauf-unique."
+    },
+    "www.kauf-unique.at": {
+      "pays": "AT", "pays_libelle": "Autriche", "enseigne": "Kauf-unique", "langues": ["de"],
+      "transporteurs": ["DHL_HOME", "DHL_FREIGHT", "GLS", "RTC"],
+      "note": "Meme langue que l'Allemagne : distinguer les deux par le domaine, jamais par la langue."
+    },
+    "www.vente-unique.be": {
+      "pays": "BE", "pays_libelle": "Belgique", "enseigne": "Vente-unique", "langues": ["fr", "nl"],
+      "transporteurs": ["VIR", "GLS", "MONDIAL_RELAY", "TSN_GROEN"],
+      "note": "Bilingue : un avis fr et un avis nl viennent du meme domaine."
+    },
+    "www.vente-unique.ch": {
+      "pays": "CH", "pays_libelle": "Suisse", "enseigne": "Vente-unique", "langues": ["fr", "de"],
+      "transporteurs": ["SWISSPOST_HOME", "GLS"],
+      "note": "Bilingue fr/de. SwissPost Home est en tier A du chantier tracking."
+    },
+    "www.vente-unique.lu": {
+      "pays": "LU", "pays_libelle": "Luxembourg", "enseigne": "Vente-unique", "langues": ["fr"],
+      "transporteurs": ["VIR", "GLS"],
+      "note": "Petit volume : un ecart de note sur un mois peut ne porter que sur quelques avis. Ne pas commenter une variation sans citer l'effectif."
+    },
+    "www.vente-unique.nl": {
+      "pays": "NL", "pays_libelle": "Pays-Bas", "enseigne": "Vente-unique", "langues": ["nl"],
+      "transporteurs": ["TSN_GROEN", "GLS", "MONDIAL_RELAY"],
+      "note": "Le rattachement des Pays-Bas entre pole FR et pole Nord n'est pas tranche (01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md). Ne pas le trancher depuis un chiffre Trustpilot."
+    },
+    "www.vente-unique.es": {
+      "pays": "ES", "pays_libelle": "Espagne", "enseigne": "Vente-unique", "langues": ["es"],
+      "transporteurs": ["MRW", "TAMDIS", "ADER", "GTS", "GLS"],
+      "note": "Une partie des contrats espagnols est portee par l'entite DISTRI SERVICE."
+    },
+    "www.vente-unique.it": {
+      "pays": "IT", "pays_libelle": "Italie", "enseigne": "Vente-unique", "langues": ["it"],
+      "transporteurs": ["BARTOLINI", "RHENUS_ITALY", "INVIO", "GLS"],
+      "note": "Bartolini se dit BRT chez les clients. INVIO est le prestataire de Mantoue - 'Nvio' n'existe pas."
+    },
+    "www.vente-unique.pt": {
+      "pays": "PT", "pays_libelle": "Portugal", "enseigne": "Vente-unique", "langues": ["pt"],
+      "transporteurs": ["XPO", "GLS"],
+      "note": ""
+    },
+    "www.vente-unique.pl": {
+      "pays": "PL", "pays_libelle": "Pologne", "enseigne": "Vente-unique", "langues": ["pl"],
+      "transporteurs": ["RHENUS_POLOGNE", "GLS"],
+      "note": "Rhenus Pologne : jamais dire 'Rhenus' sans l'entite, il y en a quatre."
+    },
+    "www.vente-unique.dk": {
+      "pays": "DK", "pays_libelle": "Danemark", "enseigne": "Vente-unique", "langues": ["da"],
+      "transporteurs": ["RTC", "BRING", "POSTEN_BRING"],
+      "note": "Le rattachement du Danemark entre Posten Bring, Bring et RTC n'est PAS tranche. Un avis danois ne permet pas de designer le transporteur : il faut passer par le referenceId."
+    },
+    "www.vente-unique.se": {
+      "pays": "SE", "pays_libelle": "Suede", "enseigne": "Vente-unique", "langues": ["sv"],
+      "transporteurs": ["BRING", "GLS"],
+      "note": "Bring livre la Suede. Posten Bring livre la Norvege. Deux transporteurs distincts du meme groupe."
+    },
+    "www.vente-unique.no": {
+      "pays": "NO", "pays_libelle": "Norvege", "enseigne": "Vente-unique", "langues": ["nb", "no"],
+      "transporteurs": ["POSTEN_BRING"],
+      "note": "Posten Bring, pas Bring. Trustpilot code le norvegien 'nb' ou 'no' selon l'avis : les deux sont acceptes."
+    },
+    "www.vente-unique.ie": {
+      "pays": "IE", "pays_libelle": "Irlande", "enseigne": "Vente-unique", "langues": ["en"],
+      "transporteurs": ["AIT"],
+      "note": "AIT couvre le Royaume-Uni ET l'Irlande. Retards Irlande : ouverture d'incident automatique a J+4 apres TAQ."
+    },
+    "www.vente-unique.uk": {
+      "pays": "UK", "pays_libelle": "Royaume-Uni", "enseigne": "Vente-unique", "langues": ["en"],
+      "transporteurs": ["AIT"],
+      "note": "Lance en avril 2026. Litige avaries en cours avec AIT : 443 scans de casse, dont 77 % constates a reception donc AVANT le transit chez AIT. Un avis UK qui parle de casse ne designe donc pas mecaniquement le transporteur."
+    }
+  },
+
+  "alias_business_units": {
+    "_pourquoi": "Personne ne dit 'www.vente-unique.it'. Ces alias sont ce que les gens disent vraiment.",
+    "fr": "www.vente-unique.com", "france": "www.vente-unique.com", "vu": "www.vente-unique.com",
+    "vente-unique": "www.vente-unique.com", "vente unique": "www.vente-unique.com", "com": "www.vente-unique.com",
+    "habitat": "www.habitat.fr", "habitat fr": "www.habitat.fr", "habitat france": "www.habitat.fr",
+    "habitat design": "www.habitat-design.com", "habitat international": "www.habitat-design.com",
+    "de": "www.kauf-unique.de", "allemagne": "www.kauf-unique.de", "kauf-unique": "www.kauf-unique.de", "kauf unique": "www.kauf-unique.de",
+    "at": "www.kauf-unique.at", "autriche": "www.kauf-unique.at",
+    "be": "www.vente-unique.be", "belgique": "www.vente-unique.be",
+    "ch": "www.vente-unique.ch", "suisse": "www.vente-unique.ch",
+    "lu": "www.vente-unique.lu", "luxembourg": "www.vente-unique.lu",
+    "nl": "www.vente-unique.nl", "pays-bas": "www.vente-unique.nl", "pays bas": "www.vente-unique.nl", "hollande": "www.vente-unique.nl",
+    "es": "www.vente-unique.es", "espagne": "www.vente-unique.es",
+    "it": "www.vente-unique.it", "italie": "www.vente-unique.it",
+    "pt": "www.vente-unique.pt", "portugal": "www.vente-unique.pt",
+    "pl": "www.vente-unique.pl", "pologne": "www.vente-unique.pl",
+    "dk": "www.vente-unique.dk", "danemark": "www.vente-unique.dk",
+    "se": "www.vente-unique.se", "suede": "www.vente-unique.se",
+    "no": "www.vente-unique.no", "norvege": "www.vente-unique.no",
+    "ie": "www.vente-unique.ie", "irlande": "www.vente-unique.ie",
+    "uk": "www.vente-unique.uk", "gb": "www.vente-unique.uk", "royaume-uni": "www.vente-unique.uk",
+    "royaume uni": "www.vente-unique.uk", "angleterre": "www.vente-unique.uk"
+  },
+
+  "themes": {
+    "_pourquoi": [
+      "Classer treize mille verbatims a la main n'est pas faisable, et les faire lire tous au",
+      "modele coute une fenetre entiere. Ce lexique fait le premier tri, cote serveur, pour",
+      "que la lecture qualitative porte sur les cinquante verbatims qui comptent.",
+      "CE QUE C'EST : une detection de MOTS, par langue de l'avis. Ce n'est pas une analyse",
+      "semantique. Elle ne comprend ni la negation, ni l'ironie, ni un theme dit sans les mots",
+      "attendus. L'outil rend toujours son taux de non-classes : au-dela de 40 %, le lexique",
+      "est a completer avant de citer une repartition.",
+      "CE QUE CE N'EST PAS : un sentiment. La polarite vient de la NOTE, qui est une donnee,",
+      "jamais d'une devinette sur le texte."
+    ],
+    "livraison_delai": {
+      "libelle": "Delai et retard de livraison",
+      "quoi": "Le client parle du temps d'attente, d'un retard, d'une date non tenue.",
+      "mots": {
+        "fr": ["retard", "retarde", "delai", "attente", "attendu", "attends", "trop long", "jamais recu", "toujours pas recu", "reporte", "decale", "semaines d'attente", "mois d'attente", "ponctuel", "dans les temps", "rapide", "rapidement"],
+        "de": ["verspatung", "verspatet", "lieferzeit", "wartezeit", "gewartet", "warten", "zu lange", "nie erhalten", "immer noch nicht", "verschoben", "punktlich", "schnell", "zugig"],
+        "nl": ["vertraging", "vertraagd", "levertijd", "wachttijd", "gewacht", "wachten", "te lang", "nooit ontvangen", "nog steeds niet", "uitgesteld", "op tijd", "snel"],
+        "it": ["ritardo", "ritardi", "tempi di consegna", "attesa", "aspettato", "aspettare", "troppo tempo", "mai ricevuto", "ancora non", "rinviata", "puntuale", "veloce", "rapida"],
+        "es": ["retraso", "retrasos", "plazo", "espera", "esperando", "esperado", "demasiado tiempo", "nunca recibi", "todavia no", "aplazado", "puntual", "rapido", "rapida"],
+        "pt": ["atraso", "atrasos", "prazo", "espera", "esperando", "demasiado tempo", "nunca recebi", "ainda nao", "adiado", "pontual", "rapido", "rapida"],
+        "pl": ["opoznienie", "opozniona", "termin", "czas dostawy", "czekanie", "czekam", "za dlugo", "nie otrzymalem", "nadal nie", "przelozone", "terminowo", "szybko"],
+        "da": ["forsinkelse", "forsinket", "leveringstid", "ventetid", "ventet", "vente", "for lang", "aldrig modtaget", "stadig ikke", "udskudt", "til tiden", "hurtig"],
+        "sv": ["forsening", "forsenad", "leveranstid", "vantetid", "vantat", "vanta", "for lang", "aldrig fatt", "fortfarande inte", "uppskjuten", "i tid", "snabb"],
+        "nb": ["forsinkelse", "forsinket", "leveringstid", "ventetid", "ventet", "vente", "for lang", "aldri mottatt", "fortsatt ikke", "utsatt", "til rett tid", "rask"],
+        "en": ["delay", "delayed", "late", "lead time", "waiting", "waited", "too long", "never received", "still not", "postponed", "on time", "quick", "fast"]
+      }
+    },
+    "livraison_rdv_creneau": {
+      "libelle": "Rendez-vous, creneau, prise de contact",
+      "quoi": "Le client parle de la prise de rendez-vous, du creneau annonce, d'un passage sans prevenir, d'un rendez-vous manque.",
+      "mots": {
+        "fr": ["rendez-vous", "rdv", "creneau", "sans prevenir", "prevenu", "appel du livreur", "n'a pas appele", "aucun appel", "plage horaire", "horaire", "personne n'est venu", "pas passe", "date de livraison"],
+        "de": ["termin", "terminvereinbarung", "zeitfenster", "ohne ankundigung", "angerufen", "nicht angerufen", "kein anruf", "uhrzeit", "niemand kam", "liefertermin"],
+        "nl": ["afspraak", "tijdslot", "tijdvak", "zonder waarschuwing", "gebeld", "niet gebeld", "geen telefoontje", "tijdstip", "niemand kwam", "leverdatum"],
+        "it": ["appuntamento", "fascia oraria", "senza avvisare", "avvisato", "chiamato", "non ha chiamato", "nessuna chiamata", "orario", "nessuno e venuto", "data di consegna"],
+        "es": ["cita", "franja horaria", "sin avisar", "avisado", "llamado", "no llamo", "ninguna llamada", "horario", "nadie vino", "fecha de entrega"],
+        "pt": ["marcacao", "hora marcada", "sem avisar", "avisado", "ligou", "nao ligou", "nenhuma chamada", "horario", "ninguem veio", "data de entrega"],
+        "pl": ["termin dostawy", "przedzial godzinowy", "bez uprzedzenia", "poinformowany", "dzwonil", "nie dzwonil", "brak telefonu", "godzina", "nikt nie przyjechal"],
+        "da": ["aftale", "tidsrum", "uden varsel", "varslet", "ringet", "ringede ikke", "ingen opkald", "tidspunkt", "ingen kom", "leveringsdato"],
+        "sv": ["bokad tid", "tidsfonster", "utan forvarning", "aviserad", "ringde", "ringde inte", "inget samtal", "tidpunkt", "ingen kom", "leveransdatum"],
+        "nb": ["avtale", "tidsrom", "uten varsel", "varslet", "ringte", "ringte ikke", "ingen telefon", "tidspunkt", "ingen kom", "leveringsdato"],
+        "en": ["appointment", "time slot", "no warning", "notified", "called", "did not call", "no call", "time window", "nobody came", "delivery date", "no show"]
+      }
+    },
+    "livraison_equipe_livreur": {
+      "libelle": "Comportement du livreur et de l'equipe",
+      "quoi": "Le client parle des personnes qui ont livre : politesse, professionnalisme, soin, refus de faire quelque chose.",
+      "mots": {
+        "fr": ["livreur", "livreurs", "chauffeur", "transporteur", "equipe de livraison", "aimable", "sympathique", "poli", "impoli", "desagreable", "professionnel", "soigneux", "sans menagement", "refuse"],
+        "de": ["lieferant", "fahrer", "lieferdienst", "spediteur", "lieferteam", "freundlich", "hoflich", "unhoflich", "unfreundlich", "professionell", "sorgfaltig", "geweigert"],
+        "nl": ["bezorger", "chauffeur", "vervoerder", "bezorgdienst", "vriendelijk", "beleefd", "onbeschoft", "onvriendelijk", "professioneel", "zorgvuldig", "geweigerd"],
+        "it": ["corriere", "autista", "trasportatore", "consegnatori", "gentile", "cortese", "sgarbato", "maleducato", "professionale", "attento", "rifiutato"],
+        "es": ["repartidor", "transportista", "conductor", "mensajeria", "amable", "cortes", "grosero", "desagradable", "profesional", "cuidadoso", "se nego"],
+        "pt": ["estafeta", "transportadora", "motorista", "entregador", "amavel", "educado", "mal-educado", "desagradavel", "profissional", "cuidadoso", "recusou"],
+        "pl": ["kurier", "kierowca", "przewoznik", "dostawca", "mily", "uprzejmy", "niemily", "nieuprzejmy", "profesjonalny", "ostrozny", "odmowil"],
+        "da": ["chauffor", "leveringsmand", "fragtmand", "transportor", "venlig", "hoflig", "uhoflig", "professionel", "omhyggelig", "nagtede"],
+        "sv": ["chauffor", "budet", "leveransman", "transportor", "vanlig", "artig", "otrevlig", "professionell", "noggrann", "vagrade"],
+        "nb": ["sjafor", "budet", "leveringsmann", "transportor", "vennlig", "hoflig", "uhoflig", "profesjonell", "forsiktig", "nektet"],
+        "en": ["driver", "delivery man", "delivery team", "courier", "carrier", "polite", "rude", "unpleasant", "professional", "careful", "refused"]
+      }
+    },
+    "livraison_etage_manutention": {
+      "libelle": "Etage, acces, manutention",
+      "quoi": "Le colis a ete laisse en bas, sur le trottoir, devant la porte ; ou au contraire monte a l'etage. C'est la prestation, pas le delai.",
+      "mots": {
+        "fr": ["etage", "palier", "monte", "pied de l'immeuble", "trottoir", "devant la porte", "sur le pas de la porte", "dans l'entree", "porte a porte", "ascenseur", "escalier", "seul pour porter", "aide", "installe"],
+        "de": ["etage", "stockwerk", "treppe", "aufzug", "vor der tur", "burgersteig", "hochgetragen", "hineingetragen", "allein tragen", "aufgestellt"],
+        "nl": ["verdieping", "trap", "lift", "voor de deur", "stoep", "naar boven gebracht", "binnen gezet", "alleen tillen", "geplaatst"],
+        "it": ["piano", "scale", "ascensore", "davanti alla porta", "marciapiede", "portato su", "portato dentro", "da solo a portare", "montato in casa"],
+        "es": ["piso", "planta", "escaleras", "ascensor", "delante de la puerta", "acera", "subido", "metido en casa", "solo para cargar", "colocado"],
+        "pt": ["andar", "escadas", "elevador", "a porta", "calcada", "subiram", "levaram para dentro", "sozinho a carregar", "colocado"],
+        "pl": ["pietro", "schody", "winda", "pod drzwi", "chodnik", "wniesli", "wniesienie", "sam nosilem", "ustawili"],
+        "da": ["etage", "trapper", "elevator", "foran doren", "fortov", "baret op", "baret ind", "alene at bare", "opstillet"],
+        "sv": ["vaning", "trappor", "hiss", "utanfor dorren", "trottoar", "burit upp", "burit in", "sjalv bara", "uppstalld"],
+        "nb": ["etasje", "trapper", "heis", "utenfor doren", "fortau", "baret opp", "baret inn", "alene a bere", "satt opp"],
+        "en": ["floor", "upstairs", "stairs", "lift", "elevator", "at the door", "doorstep", "kerb", "curb", "carried up", "carried in", "on my own to carry", "placed in the room"]
+      }
+    },
+    "produit_abime_casse": {
+      "libelle": "Produit abime, casse, rayé",
+      "quoi": "Le produit est arrive endommage. C'est le theme le plus directement transport - mais pas exclusivement : la casse peut etre anterieure a l'expedition.",
+      "mots": {
+        "fr": ["abime", "abimee", "casse", "cassee", "brise", "raye", "rayure", "fissure", "enfonce", "endommage", "deteriore", "carton ecrase", "emballage abime", "tache", "bosse"],
+        "de": ["beschadigt", "kaputt", "zerbrochen", "gebrochen", "verkratzt", "kratzer", "riss", "delle", "eingedruckt", "karton beschadigt", "verpackung beschadigt", "fleck"],
+        "nl": ["beschadigd", "kapot", "gebroken", "gebarsten", "gekrast", "kras", "scheur", "deuk", "doos beschadigd", "verpakking beschadigd", "vlek"],
+        "it": ["danneggiato", "rotto", "rotta", "spezzato", "graffiato", "graffio", "crepa", "ammaccato", "scatola danneggiata", "imballaggio danneggiato", "macchia"],
+        "es": ["danado", "roto", "rota", "rajado", "rayado", "arana", "grieta", "abollado", "caja danada", "embalaje danado", "mancha"],
+        "pt": ["danificado", "quebrado", "partido", "riscado", "risco", "racha", "amolgado", "caixa danificada", "embalagem danificada", "mancha"],
+        "pl": ["uszkodzony", "zepsuty", "zlamany", "peknieta", "porysowany", "zadrapanie", "wgniecenie", "karton uszkodzony", "opakowanie uszkodzone", "plama"],
+        "da": ["beskadiget", "odelagt", "gaet i stykker", "knust", "ridset", "ridse", "revne", "bule", "kasse beskadiget", "emballage beskadiget"],
+        "sv": ["skadad", "trasig", "sonder", "knackt", "repad", "repa", "spricka", "buckla", "kartong skadad", "emballage skadat"],
+        "nb": ["skadet", "odelagt", "knust", "ripet", "ripe", "sprekk", "bulk", "eske skadet", "emballasje skadet"],
+        "en": ["damaged", "broken", "cracked", "scratched", "scratch", "dented", "chipped", "box damaged", "packaging damaged", "stain"]
+      }
+    },
+    "produit_manquant_incomplet": {
+      "libelle": "Colis manquant, commande incomplete",
+      "quoi": "Une piece, un colis ou une partie de la commande manque. Sur du meuble, un colis sur trois manquant rend l'ensemble inutilisable.",
+      "mots": {
+        "fr": ["manquant", "manque", "manquait", "incomplet", "colis perdu", "il manque", "pas au complet", "une piece", "vis manquantes", "un seul colis", "moitie de la commande", "jamais arrive"],
+        "de": ["fehlt", "fehlend", "fehlende teile", "unvollstandig", "paket verloren", "nur ein paket", "halbe bestellung", "nie angekommen"],
+        "nl": ["ontbreekt", "ontbrekend", "onvolledig", "pakket kwijt", "maar een pakket", "halve bestelling", "nooit aangekomen"],
+        "it": ["mancante", "manca", "mancano", "incompleto", "pacco perso", "solo un pacco", "meta dell'ordine", "mai arrivato"],
+        "es": ["falta", "faltan", "faltante", "incompleto", "paquete perdido", "solo un paquete", "media del pedido", "nunca llego"],
+        "pt": ["falta", "faltam", "em falta", "incompleto", "encomenda perdida", "so uma caixa", "metade da encomenda", "nunca chegou"],
+        "pl": ["brakuje", "brak", "brakujace", "niekompletne", "paczka zaginela", "tylko jedna paczka", "polowa zamowienia", "nigdy nie dotarlo"],
+        "da": ["mangler", "manglende", "ufuldstaendig", "pakke forsvundet", "kun en pakke", "halve ordre", "aldrig ankommet"],
+        "sv": ["saknas", "saknade", "ofullstandig", "paket forsvunnet", "bara ett paket", "halva ordern", "aldrig kommit"],
+        "nb": ["mangler", "manglende", "ufullstendig", "pakke forsvunnet", "bare en pakke", "halve ordren", "aldri kommet"],
+        "en": ["missing", "incomplete", "parcel lost", "only one box", "half the order", "never arrived", "missing parts", "missing screws"]
+      }
+    },
+    "produit_qualite_conformite": {
+      "libelle": "Qualite et conformite du produit",
+      "quoi": "Le produit est arrive intact mais ne vaut pas, ou ne correspond pas a ce qui etait annonce. Ce theme n'est PAS transport : il remonte a l'achat et au descriptif.",
+      "mots": {
+        "fr": ["qualite", "matiere", "solide", "robuste", "fragile", "toc", "bas de gamme", "conforme", "pas conforme", "different de la photo", "couleur differente", "plus petit", "comme sur la photo", "beau", "magnifique"],
+        "de": ["qualitat", "material", "stabil", "robust", "billig", "minderwertig", "wie beschrieben", "nicht wie beschrieben", "anders als auf dem foto", "farbe anders", "kleiner", "schon"],
+        "nl": ["kwaliteit", "materiaal", "stevig", "degelijk", "goedkoop", "zoals beschreven", "niet zoals beschreven", "anders dan op de foto", "kleur anders", "kleiner", "mooi"],
+        "it": ["qualita", "materiale", "solido", "robusto", "scadente", "come descritto", "non conforme", "diverso dalla foto", "colore diverso", "piu piccolo", "bello"],
+        "es": ["calidad", "material", "solido", "robusto", "cutre", "como se describe", "no conforme", "distinto a la foto", "color diferente", "mas pequeno", "bonito"],
+        "pt": ["qualidade", "material", "solido", "robusto", "fraco", "como descrito", "nao conforme", "diferente da foto", "cor diferente", "mais pequeno", "bonito"],
+        "pl": ["jakosc", "material", "solidny", "trwaly", "tandeta", "zgodny z opisem", "niezgodny", "inny niz na zdjeciu", "inny kolor", "mniejszy", "piekny"],
+        "da": ["kvalitet", "materiale", "solid", "robust", "billig kvalitet", "som beskrevet", "ikke som beskrevet", "anderledes end billedet", "anden farve", "mindre", "flot"],
+        "sv": ["kvalitet", "material", "stabil", "robust", "billig kvalitet", "som beskrivet", "inte som beskrivet", "annat an pa bilden", "annan farg", "mindre", "fin"],
+        "nb": ["kvalitet", "materiale", "solid", "robust", "billig kvalitet", "som beskrevet", "ikke som beskrevet", "annet enn pa bildet", "annen farge", "mindre", "fin"],
+        "en": ["quality", "material", "sturdy", "solid", "flimsy", "cheap", "as described", "not as described", "different from the photo", "different colour", "smaller", "beautiful"]
+      }
+    },
+    "montage_notice": {
+      "libelle": "Montage, notice, visserie",
+      "quoi": "Le client parle du montage : notice illisible, trous mal perces, visserie absente, temps de montage. Ni transport, ni SAV : produit et documentation.",
+      "mots": {
+        "fr": ["montage", "monter", "notice", "instructions", "plan de montage", "vis", "visserie", "chevilles", "trous", "percage", "mal perce", "ne s'assemble pas", "facile a monter", "difficile a monter"],
+        "de": ["aufbau", "montage", "anleitung", "aufbauanleitung", "schrauben", "dubel", "bohrungen", "locher", "passt nicht zusammen", "leicht aufzubauen", "schwer aufzubauen"],
+        "nl": ["montage", "monteren", "handleiding", "instructies", "schroeven", "pluggen", "gaten", "past niet", "makkelijk te monteren", "moeilijk te monteren"],
+        "it": ["montaggio", "montare", "istruzioni", "libretto", "viti", "tasselli", "fori", "non combaciano", "facile da montare", "difficile da montare"],
+        "es": ["montaje", "montar", "instrucciones", "manual", "tornillos", "tacos", "agujeros", "no encajan", "facil de montar", "difficil de montar"],
+        "pt": ["montagem", "montar", "instrucoes", "manual", "parafusos", "buchas", "furos", "nao encaixa", "facil de montar", "dificil de montar"],
+        "pl": ["montaz", "zmontowac", "instrukcja", "sruby", "kolki", "otwory", "nie pasuje", "latwy montaz", "trudny montaz"],
+        "da": ["montering", "samle", "vejledning", "instruktioner", "skruer", "rawlplugs", "huller", "passer ikke", "let at samle", "svaer at samle"],
+        "sv": ["montering", "montera", "anvisning", "instruktioner", "skruvar", "plugg", "hal", "passar inte", "latt att montera", "svar att montera"],
+        "nb": ["montering", "montere", "veiledning", "instruksjoner", "skruer", "plugger", "hull", "passer ikke", "lett a montere", "vanskelig a montere"],
+        "en": ["assembly", "assemble", "instructions", "manual", "screws", "dowels", "holes", "does not fit", "easy to assemble", "hard to assemble"]
+      }
+    },
+    "sav_service_client": {
+      "libelle": "Service client et SAV",
+      "quoi": "Le client parle du service apres-vente : joignabilite, reactivite, reponse, prise en charge de son probleme.",
+      "mots": {
+        "fr": ["service client", "sav", "apres-vente", "reclamation", "injoignable", "aucune reponse", "pas de reponse", "reactif", "a l'ecoute", "personne pour repondre", "hotline", "chat", "mail sans reponse", "relance"],
+        "de": ["kundendienst", "kundenservice", "reklamation", "nicht erreichbar", "keine antwort", "keine reaktion", "reagiert", "hotline", "mehrmals geschrieben"],
+        "nl": ["klantenservice", "klantendienst", "klacht", "niet bereikbaar", "geen antwoord", "geen reactie", "reageert", "meerdere keren gemaild"],
+        "it": ["servizio clienti", "assistenza", "reclamo", "non raggiungibile", "nessuna risposta", "non rispondono", "risposto", "piu volte scritto"],
+        "es": ["atencion al cliente", "servicio al cliente", "reclamacion", "ilocalizable", "ninguna respuesta", "no responden", "respondido", "varias veces"],
+        "pt": ["servico ao cliente", "apoio ao cliente", "reclamacao", "impossivel de contactar", "nenhuma resposta", "nao respondem", "responderam", "varias vezes"],
+        "pl": ["obsluga klienta", "reklamacja", "nie mozna sie dodzwonic", "brak odpowiedzi", "nie odpowiadaja", "odpowiedzieli", "wielokrotnie"],
+        "da": ["kundeservice", "klage", "kan ikke kontaktes", "intet svar", "svarer ikke", "svarede", "flere gange"],
+        "sv": ["kundtjanst", "klagomal", "gar inte att na", "inget svar", "svarar inte", "svarade", "flera ganger"],
+        "nb": ["kundeservice", "klage", "ikke mulig a na", "ingen svar", "svarer ikke", "svarte", "flere ganger"],
+        "en": ["customer service", "customer support", "after sales", "complaint", "unreachable", "no reply", "no answer", "responsive", "chased them"]
+      }
+    },
+    "retour_remboursement": {
+      "libelle": "Retour, remboursement, avoir",
+      "quoi": "Le client parle de renvoyer le produit, d'un remboursement attendu, d'un geste commercial. Souvent le second temps d'un probleme de casse ou de conformite.",
+      "mots": {
+        "fr": ["retour", "retourner", "remboursement", "rembourse", "avoir", "geste commercial", "dedommagement", "reprise", "recuperer le produit", "renvoyer", "annulation", "annule"],
+        "de": ["ruckgabe", "rucksendung", "ruckerstattung", "erstattet", "gutschrift", "entschadigung", "abholung", "zurucksenden", "storno", "storniert"],
+        "nl": ["retour", "terugsturen", "terugbetaling", "terugbetaald", "creditnota", "compensatie", "ophalen", "annulering", "geannuleerd"],
+        "it": ["reso", "restituire", "rimborso", "rimborsato", "nota di credito", "risarcimento", "ritiro", "annullamento", "annullato"],
+        "es": ["devolucion", "devolver", "reembolso", "reembolsado", "abono", "compensacion", "recogida", "anulacion", "anulado"],
+        "pt": ["devolucao", "devolver", "reembolso", "reembolsado", "nota de credito", "compensacao", "recolha", "anulacao", "anulado"],
+        "pl": ["zwrot", "odeslac", "refundacja", "zwrot pieniedzy", "korekta", "rekompensata", "odbior", "anulowanie", "anulowane"],
+        "da": ["retur", "returnere", "refusion", "refunderet", "kreditnota", "kompensation", "afhentning", "annullering", "annulleret"],
+        "sv": ["retur", "returnera", "aterbetalning", "aterbetalat", "kreditfaktura", "kompensation", "upphamtning", "avbokning", "avbokad"],
+        "nb": ["retur", "returnere", "refusjon", "refundert", "kreditnota", "kompensasjon", "henting", "kansellering", "kansellert"],
+        "en": ["return", "send back", "refund", "refunded", "credit note", "compensation", "collection", "cancellation", "cancelled"]
+      }
+    },
+    "commande_site_paiement": {
+      "libelle": "Commande, site, paiement",
+      "quoi": "Le client parle du parcours d'achat : site, choix, paiement, compte, confirmation. En amont de la logistique.",
+      "mots": {
+        "fr": ["site", "commande en ligne", "paiement", "paye", "carte bancaire", "compte client", "confirmation", "panier", "choix", "facile a commander", "processus de commande"],
+        "de": ["webseite", "website", "bestellung", "bestellvorgang", "zahlung", "bezahlt", "kreditkarte", "kundenkonto", "bestatigung", "warenkorb", "auswahl", "einfach zu bestellen"],
+        "nl": ["website", "site", "bestelling", "besteld", "betaling", "betaald", "creditcard", "account", "bevestiging", "keuze", "makkelijk te bestellen"],
+        "it": ["sito", "ordine online", "pagamento", "pagato", "carta di credito", "account", "conferma", "carrello", "scelta", "facile ordinare"],
+        "es": ["pagina web", "web", "pedido online", "pago", "pagado", "tarjeta", "cuenta", "confirmacion", "carrito", "eleccion", "facil de pedir"],
+        "pt": ["site", "encomenda online", "pagamento", "pago", "cartao", "conta", "confirmacao", "carrinho", "escolha", "facil de encomendar"],
+        "pl": ["strona", "zamowienie online", "plarnosc", "zaplacone", "karta", "konto", "potwierdzenie", "koszyk", "wybor", "latwe zamawianie"],
+        "da": ["hjemmeside", "ordre online", "betaling", "betalt", "kort", "konto", "bekraeftelse", "kurv", "udvalg", "nemt at bestille"],
+        "sv": ["hemsida", "order online", "betalning", "betalat", "kort", "konto", "bekraftelse", "varukorg", "utbud", "latt att bestalla"],
+        "nb": ["nettside", "ordre online", "betaling", "betalt", "kort", "konto", "bekreftelse", "handlekorg", "utvalg", "lett a bestille"],
+        "en": ["website", "online order", "checkout", "payment", "paid", "card", "account", "confirmation", "basket", "choice", "easy to order"]
+      }
+    },
+    "suivi_information": {
+      "libelle": "Suivi et information client",
+      "quoi": "Le client parle de ce qu'on lui a dit, ou pas : tracking, mails, statut de commande, promesses non tenues. C'est le theme du chantier tracking (TIL) et de Scalia.",
+      "mots": {
+        "fr": ["suivi", "tracking", "numero de suivi", "aucune information", "aucune nouvelle", "pas informe", "mal informe", "statut", "tenu au courant", "informe regulierement", "sms", "mail de suivi"],
+        "de": ["sendungsverfolgung", "tracking", "trackingnummer", "keine information", "nichts gehort", "nicht informiert", "status", "auf dem laufenden", "sms", "benachrichtigung"],
+        "nl": ["tracking", "trackingnummer", "geen informatie", "niets gehoord", "niet geinformeerd", "status", "op de hoogte", "sms", "melding"],
+        "it": ["tracciamento", "tracking", "numero di tracciamento", "nessuna informazione", "nessuna notizia", "non informato", "stato", "aggiornato", "sms", "notifica"],
+        "es": ["seguimiento", "tracking", "numero de seguimiento", "ninguna informacion", "sin noticias", "no informado", "estado", "informado", "sms", "aviso"],
+        "pt": ["seguimento", "tracking", "numero de rastreio", "nenhuma informacao", "sem noticias", "nao informado", "estado", "informado", "sms", "aviso"],
+        "pl": ["sledzenie", "tracking", "numer przesylki", "brak informacji", "brak wiadomosci", "nie poinformowany", "status", "informowany", "sms", "powiadomienie"],
+        "da": ["sporing", "tracking", "sporingsnummer", "ingen information", "intet hort", "ikke informeret", "status", "holdt opdateret", "sms", "besked"],
+        "sv": ["sparning", "tracking", "sparningsnummer", "ingen information", "inget hort", "inte informerad", "status", "holls uppdaterad", "sms", "avisering"],
+        "nb": ["sporing", "tracking", "sporingsnummer", "ingen informasjon", "ingenting hort", "ikke informert", "status", "holdt oppdatert", "sms", "varsel"],
+        "en": ["tracking", "tracking number", "no information", "no news", "not informed", "status", "kept updated", "sms", "notification"]
+      }
+    },
+    "prix_valeur": {
+      "libelle": "Prix et rapport qualite-prix",
+      "quoi": "Le client parle du prix, d'une promotion, du rapport qualite-prix. Utile pour ne pas compter un avis prix dans un theme livraison.",
+      "mots": {
+        "fr": ["prix", "cher", "pas cher", "rapport qualite prix", "promotion", "solde", "frais de livraison", "frais de port", "gratuit"],
+        "de": ["preis", "teuer", "gunstig", "preis-leistung", "aktion", "rabatt", "versandkosten", "kostenlos"],
+        "nl": ["prijs", "duur", "goedkoop", "prijs-kwaliteit", "actie", "korting", "verzendkosten", "gratis"],
+        "it": ["prezzo", "caro", "economico", "rapporto qualita prezzo", "offerta", "sconto", "spese di spedizione", "gratis"],
+        "es": ["precio", "caro", "barato", "relacion calidad precio", "oferta", "descuento", "gastos de envio", "gratis"],
+        "pt": ["preco", "caro", "barato", "relacao qualidade preco", "promocao", "desconto", "portes", "gratis"],
+        "pl": ["cena", "drogo", "tanio", "stosunek jakosci do ceny", "promocja", "rabat", "koszt dostawy", "darmowa"],
+        "da": ["pris", "dyr", "billig", "pris og kvalitet", "tilbud", "rabat", "fragt", "gratis"],
+        "sv": ["pris", "dyr", "billig", "pris och kvalitet", "erbjudande", "rabatt", "frakt", "gratis"],
+        "nb": ["pris", "dyr", "billig", "pris og kvalitet", "tilbud", "rabatt", "frakt", "gratis"],
+        "en": ["price", "expensive", "cheap", "value for money", "offer", "discount", "shipping cost", "free delivery"]
+      }
+    }
+  },
+
+  "transporteurs": {
+    "_pourquoi": [
+      "Un client cite parfois le transporteur par son nom dans le verbatim. C'est rare, et",
+      "c'est de l'or : c'est le seul endroit ou le lien avis / transporteur est direct sans",
+      "passer par le referenceId.",
+      "ATTENTION : compter les mentions ne mesure pas la qualite d'un transporteur. On ne cite",
+      "que ce qui frappe, et un transporteur tres present est plus souvent nomme. Un taux de",
+      "mention n'est pas un taux d'incident. La mesure reste le Scorecard."
+    ],
+    "_source": "01_CONTEXTE/PORTEFEUILLE_ET_ZONES.md, 2026-08-26. La base validee 02_TRANSPORTEURS/ fait foi.",
+    "VIR": {"alias": ["vir", "distri service", "distri-service"], "pays": ["FR", "BE", "LU"], "note": "VIR ecrit depuis distri-service.eu. DISTRI SERVICE est AUSSI une entite signataire de Vente-unique : deux sens pour un nom."},
+    "VUD": {"alias": ["vu delivery", "vud", "vente-unique delivery"], "pays": ["FR"], "note": "Capacite interne, pas un prestataire du portefeuille. Un avis critique sur VUD est un sujet interne, pas une revue fournisseur."},
+    "JP_HOME": {"alias": ["jp home", "jph", "perrenot"], "pays": ["FR"], "note": "Groupe Perrenot. Dans les donnees Shiptify, JP HOME apparait sous les libelles de VIR - voir shiptify_lexique avant de croiser."},
+    "GEODIS": {"alias": ["geodis"], "pays": ["FR"], "note": ""},
+    "COLISSIMO": {"alias": ["colissimo", "la poste"], "pays": ["FR"], "note": "Colissimo n'est pas Colis Postal : deux dossiers distincts."},
+    "CHRONOPOST": {"alias": ["chronopost"], "pays": ["FR"], "note": ""},
+    "RELAIS_COLIS": {"alias": ["relais colis", "relais-colis"], "pays": ["FR"], "note": "Point relais : une part importante du flux meuble n'y rentre pas, le gabarit est le facteur limitant."},
+    "MONDIAL_RELAY": {"alias": ["mondial relay", "mondialrelay", "inpost"], "pays": ["FR", "BE", "NL", "ES"], "note": "Transverse aux trois zones."},
+    "GLS": {"alias": ["gls"], "pays": ["FR", "BE", "DE", "AT", "IT", "ES", "PT", "PL", "SE", "CH", "NL", "LU"], "note": "Transverse, par groupes de pays. Tier A du chantier tracking."},
+    "AGRIKOLIS": {"alias": ["agrikolis"], "pays": ["FR"], "note": "Retrait en ferme."},
+    "TRED_CHARIOT": {"alias": ["tred chariot", "tred-chariot"], "pays": ["FR"], "note": ""},
+    "TRUSK": {"alias": ["trusk"], "pays": ["FR"], "note": ""},
+    "DEALT": {"alias": ["dealt"], "pays": ["FR"], "note": ""},
+    "COGEPART": {"alias": ["cogepart"], "pays": ["FR"], "note": ""},
+    "TSN_GROEN": {"alias": ["tsn", "tsn groen", "groen"], "pays": ["NL", "BE"], "note": ""},
+    "DHL_HOME": {"alias": ["dhl home", "dhl"], "pays": ["DE", "AT"], "note": "DHL Home n'est pas DHL Freight : deux prestations, deux dossiers. Un client ecrit 'DHL' sans distinguer."},
+    "DHL_FREIGHT": {"alias": ["dhl freight"], "pays": ["DE", "AT"], "note": "Voir DHL Home."},
+    "RTC": {"alias": ["rtc"], "pays": ["DE", "AT", "DK"], "note": ""},
+    "LGT": {"alias": ["lgt"], "pays": ["DE"], "note": ""},
+    "CARGOE": {"alias": ["cargoe"], "pays": ["DE"], "note": ""},
+    "SWISSPOST_HOME": {"alias": ["swiss post", "swisspost", "poste suisse", "die post"], "pays": ["CH"], "note": "Tier A du chantier tracking."},
+    "MRW": {"alias": ["mrw"], "pays": ["ES"], "note": ""},
+    "TAMDIS": {"alias": ["tamdis"], "pays": ["ES"], "note": "Tier B du chantier tracking."},
+    "ADER": {"alias": ["ader"], "pays": ["ES"], "note": ""},
+    "GTS": {"alias": ["gts", "global team solutions"], "pays": ["ES"], "note": "Sous-traitant last mile, Madrid."},
+    "XPO": {"alias": ["xpo"], "pays": ["PT"], "note": ""},
+    "BARTOLINI": {"alias": ["bartolini", "brt"], "pays": ["IT"], "note": "Les clients italiens ecrivent BRT."},
+    "RHENUS_ITALY": {"alias": ["rhenus"], "pays": ["IT"], "note": "QUATRE entites Rhenus distinctes : Italie, Pologne, une etude Pays-Bas, une entite Road Benelux. Ne jamais dire 'Rhenus' sans l'entite. Un verbatim italien qui dit 'Rhenus' designe Rhenus Italie."},
+    "INVIO": {"alias": ["invio"], "pays": ["IT"], "note": "Prestataire de Mantoue. 'Nvio' n'existe pas. Abimes 3,04 % contre 2 % au contrat en 2026."},
+    "RHENUS_POLOGNE": {"alias": ["rhenus"], "pays": ["PL"], "note": "Voir Rhenus Italie : l'entite se lit dans le pays de l'avis."},
+    "BRING": {"alias": ["bring"], "pays": ["SE", "DK"], "note": "Bring livre la SUEDE. Ne pas confondre avec Posten Bring, qui livre la Norvege."},
+    "POSTEN_BRING": {"alias": ["posten", "posten bring", "posten norge"], "pays": ["NO", "DK"], "note": "Posten Bring livre la NORVEGE. Deux transporteurs distincts du meme groupe."},
+    "AIT": {"alias": ["ait", "ait worldwide"], "pays": ["UK", "IE"], "note": "Royaume-Uni ET Irlande. Litige avaries en cours : 443 scans de casse, 77 % constates a reception donc avant transit AIT."},
+    "NO_LIMIT": {"alias": ["no limit", "nolimit"], "pays": ["CZ", "HU", "SK"], "note": "Ecrit aussi 'Nos Limites' dans le corpus. Le dossier de la base validee est NO_LIMIT."},
+    "CASA_DELIVERY": {"alias": ["casa delivery"], "pays": ["FI"], "note": "FINLANDE, malgre le nom."}
+  },
+
+  "champs_a_connaitre": {
+    "_pourquoi": "Six champs valent d'etre connus avant d'ecrire un filtre. Les autres se lisent dans api_paths.json.",
+    "stars": "La note de 1 a 5. C'est la seule mesure de satisfaction du connecteur, et elle est fiable. La 'polarite' d'un avis vient de la, jamais d'une lecture du texte.",
+    "createdAt": "Date de PUBLICATION de l'avis. C'est la date par defaut de tous les filtres et de tous les regroupements par mois.",
+    "experiencedAt": "Date a laquelle le client dit avoir vecu l'experience - souvent la date de livraison. Elle est ANTERIEURE a createdAt, parfois de plusieurs semaines. Regrouper par mois sur experiencedAt et filtrer sur createdAt fait apparaitre des mois hors perimetre : c'est exactement le piege created_at / date du connecteur Shiptify.",
+    "referenceId": "L'identifiant que NOUS avons envoye avec l'invitation : chez nous, le numero de commande. C'est LA jointure vers le back-office, Reflex et Shiptify - donc vers le transporteur reel. N'existe que sur les avis issus d'une invitation, et n'est visible que par le chemin PRIVE.",
+    "referralEmail": "L'adresse mail du client invite. DONNEE PERSONNELLE : ne se recopie ni dans un livrable, ni dans un mail transporteur, ni dans la base de connaissance.",
+    "companyReply": "La reponse publiee par l'entreprise. Absent = avis sans reponse. Sa date permet de mesurer le delai de reponse, qui est un indicateur du service client, pas du transport.",
+    "source": "Comment l'avis est arrive : invitation (nous l'avons sollicite) ou organique (le client est venu seul). Un pic d'avis negatifs organiques ne se lit pas comme un pic sur invitation.",
+    "language": "Code langue de l'avis. Sert au classement par theme : le lexique n'applique que les mots de la langue de l'avis, ce qui evite les faux positifs entre langues proches.",
+    "isVerified": "Avis verifie par Trustpilot. Un avis non verifie compte quand meme dans ce que lisent les clients.",
+    "countsTowardsTrustScore": "L'avis entre-t-il dans le calcul du TrustScore. Un ecart entre le nombre d'avis lus ici et le TrustScore affiche vient souvent de la."
+  },
+
+  "pieges": {
+    "public_vs_prive": "Le chemin PUBLIC ne porte aucun filtre de date et ne voit ni le referenceId ni le referralEmail. Le chemin PRIVE porte tout et demande une authentification OAuth. Une question qui commence par une periode a besoin du prive : sur le public, le connecteur lit du plus recent au plus ancien et s'arrete a la borne, ce qui coute des appels et ne remonte pas au-dela de ce que l'API publique expose.",
+    "le_nombre_d_avis_n_est_pas_un_volume": "Un pays a plus d'avis parce qu'il vend plus ET parce qu'il repond plus. Comparer deux pays sur le nombre d'avis ne compare rien. La note moyenne se compare, l'effectif se cite a cote.",
+    "petits_effectifs": "Sur LU, IE, DK, un mois peut ne compter que quelques avis. Une note qui passe de 4,2 a 3,6 sur huit avis n'est pas un signal. Toujours citer l'effectif avec la note.",
+    "la_casse_n_est_pas_toujours_le_transport": "Sur le Royaume-Uni, 77 % des scans de casse sont constates A RECEPTION, donc avant le transporteur. Un theme 'produit abime' en hausse n'accuse pas un transporteur : il ouvre une question.",
+    "habitat_design_multi_pays": "www.habitat-design.com sert six locales. Ne lui attribuer aucun pays unique : le pays se lit dans la langue de l'avis et dans consumer.displayLocation.",
+    "norvegien_nb_ou_no": "Trustpilot code le norvegien 'nb' ou 'no' selon l'avis. Filtrer sur une seule des deux valeurs perd la moitie du pays.",
+    "themes_lexicaux": "Le classement par theme est une detection de mots, pas une comprehension. Il ignore la negation ('aucun retard' compte dans le theme delai). Il sert a orienter la lecture, pas a produire un chiffre a citer seul. L'outil rend son taux de non-classes : le lire avant de conclure."
+  },
+
+  "questions_frequentes": [
+    {"question": "quelle est la note Trustpilot de l'Italie ce mois-ci", "outil": "trustpilot_summary", "appel": "domaine='it', group_by='mois' - la note moyenne des avis de la periode, a ne pas confondre avec le TrustScore affiche, qui est ponderé et glissant : celui-la est dans trustpilot_profile"},
+    {"question": "de quoi se plaignent les clients espagnols", "outil": "trustpilot_themes puis trustpilot_verbatims", "appel": "themes d'abord pour savoir ou regarder, verbatims ensuite pour lire - jamais l'inverse"},
+    {"question": "est-ce que les clients citent AIT", "outil": "trustpilot_transporteurs", "appel": "domaine='uk' - et rappeler qu'un taux de mention n'est pas un taux d'incident"},
+    {"question": "on a un avis a une etoile, quelle commande", "outil": "trustpilot_get_review puis le referenceId", "appel": "le referenceId est le numero de commande : le porter ensuite dans Reflex ou Shiptify pour trouver le transporteur"},
+    {"question": "les avis d'un client precis", "outil": "trustpilot_find_review", "appel": "reference_id='<numero de commande>' - le chemin prive uniquement"},
+    {"question": "l'evolution de la note sur douze mois, tous pays", "outil": "trustpilot_sync puis trustpilot_sql", "appel": "le direct plafonne, douze mois sur dix-huit domaines passent par le cache"},
+    {"question": "combien d'avis sans reponse", "outil": "trustpilot_summary", "appel": "group_by='reponse'"}
+  ]
+}

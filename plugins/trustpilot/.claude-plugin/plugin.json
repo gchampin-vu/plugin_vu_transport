@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "trustpilot",
+  "displayName": "Trustpilot (lecture seule)",
+  "version": "1.0.0",
+  "description": "Lit les avis de service Trustpilot des 18 domaines du groupe (Vente-unique, Kauf-unique, Habitat) en lecture seule : avis, notes, TrustScore, reponses de l'entreprise. Interprete les commentaires - classement thematique dans les 11 langues du perimetre, detection des transporteurs cites desambiguisee par pays, selection de verbatims a lire. Le referenceId d'un avis est le numero de commande : c'est la jointure vers Reflex et Shiptify, donc vers le transporteur reel. Agregation cote serveur (note moyenne, part de 1-2 etoiles, taux et delai de reponse), cache local SQLite interrogeable en SQL, export CSV sur demande explicite. Aucune ecriture : ni reponse a un avis, ni tag, ni invitation. 22 outils.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "trustpilot",
+    "avis-clients",
+    "satisfaction",
+    "verbatim",
+    "qualite-de-service",
+    "transport",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Cle d'API Trustpilot",
+      "description": "Le « API Key » (ou Client ID) de l'application Trustpilot, dans Trustpilot Business > Integrations > API applications. Laisse vide si la configuration d'equipe est atteignable : la valeur y est deja posee pour tout le monde (08_ENGINE/04_mcp/00_config/trustpilot.shared.env). A ne renseigner que pour un acces nominatif ou de recette. Lance /trustpilot-setup pour etre guide pas a pas.",
+      "required": false,
+      "sensitive": true
+    },
+    "api_secret": {
+      "type": "string",
+      "title": "Secret d'API Trustpilot",
+      "description": "Le « API Secret » de la MEME application, a cote de la cle. Il ouvre le chemin PRIVE de l'API : sans lui, le connecteur lit les avis mais ne peut ni filtrer par periode cote serveur, ni rendre le referenceId - donc ni relier un avis a une commande, ni retrouver l'avis d'une commande. Meme remarque que pour la cle : la valeur d'equipe suffit dans le cas normal.",
+      "required": false,
+      "sensitive": true
+    },
+    "refresh_token": {
+      "type": "string",
+      "title": "Refresh token OAuth (a laisser vide)",
+      "description": "A NE PAS REMPLIR dans le cas normal. Le connecteur obtient son jeton par client_credentials, qui ne tourne pas et ne s'invalide pas. Trustpilot fait TOURNER un refresh token a chaque echange : un jeton partage entre deux postes se casse mutuellement, et rend une erreur invalid_grant difficile a diagnostiquer. A renseigner seulement si l'application Trustpilot impose ce mode.",
+      "required": false,
+      "sensitive": true
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.trustpilot-mcp/exports. Ne pointe PAS un dossier de la bibliotheque d'equipe : un export porte des verbatims clients, et la base de connaissance ne porte pas de donnees.",
+      "required": false
+    }
+  }
+}

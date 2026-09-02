@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "trustpilot": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/bootstrap.py"],
+      "env": {
+        "TRUSTPILOT_API_KEY": "${user_config.api_key}",
+        "TRUSTPILOT_API_SECRET": "${user_config.api_secret}",
+        "TRUSTPILOT_REFRESH_TOKEN": "${user_config.refresh_token}",
+        "TRUSTPILOT_EXPORT_DIR": "${user_config.export_dir}"
+      }
+    }
+  }
+}

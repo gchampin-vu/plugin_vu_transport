@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-28
+updated: 2026-09-02
 updated_by: Guillaume_Champin
 type: process
 ---
@@ -15,6 +15,14 @@ jour tout seul ensuite.
 | `shiptify` | Serveur MCP en lecture seule sur la base Shiptify (17 outils) + une skill qui sait s'en servir | recette passee contre la production le 2026-08-27 |
 | `yooz-factures` | Serveur MCP en lecture seule sur la base de factures Yooz (20 outils) + une skill. **Recherche filtree en direct sur la grille du portail**, historique dans un cache local interrogeable en SQL, et requetes directes pour le reste | teste hors reseau le 2026-08-28 (56 controles, 3 echecs connus d'isolation du test). **Chemin direct confronte au vrai Yooz le 2026-08-28** : rapproche du cache sur 3 303 documents, aucun ecart de montant |
 | `peripass` | Serveur MCP en lecture seule sur le yard management Peripass (20 outils) + une skill. **Multi-tenant** : une cle par site, AUV et AMB interroges ensemble, une colonne `site` sur chaque resultat | teste hors reseau le 2026-08-28 (82 controles), handshake MCP et chaine HTTP verifies contre les deux hotes de production. **Pas encore confronte a un tenant avec une cle valide** : les cles du script Power Query sont a faire tourner d'abord |
+| `gisco` | Serveur MCP en lecture seule sur le referentiel geographique europeen d'Eurostat (20 outils) + une skill. Pays, NUTS, 98 000 communes, 830 000 codes postaux avec commune, NUTS3 et degre d'urbanisation. Rattachement d'un point a sa commune **hors ligne**, sans GDAL ni geopandas. Versant britannique charge depuis l'ONS dans les memes tables. Millesimes **decouverts chez Eurostat**, pas ecrits en dur, et couches du cache en retard signalees. **Aucune cle** : service public ouvert | monte le 2026-09-01. 98 controles hors ligne verts au 2026-09-02 - realignes sur la decouverte des millesimes, contre laquelle trois d'entre eux ne compilaient plus. Handshake MCP re-verifie : 20 outils annotes `readOnlyHint` et instructions de serveur servies au client. **Un defaut corrige** : la reprise de schema n'existait que sur le chemin d'ecriture, donc `gisco_couches` echouait sur un cache monte par une version precedente. 5 couches GISCO et 2 couches ONS rapatriees et interrogees contre la production. **`uk_onspd` valide sur 4 000 codes postaux, pas sur les 1,8 million.** Portee macOS non verifiee |
+| `trustpilot` | Serveur MCP en lecture seule sur les avis Trustpilot des 18 domaines du groupe (22 outils) + une skill. Avis, notes, TrustScore, reponses. **Interprete les commentaires** : themes dans les 11 langues, transporteurs cites desambiguises par pays, verbatims selectionnes. Le `referenceId` est notre numero de commande - la jointure vers Reflex et Shiptify, ouverte par le chemin **prive** (cle + secret). Cache local SQLite pour l'historique. **Aucune ecriture** : ni reponse a un avis, ni tag, ni invitation | monte le 2026-09-02. 188 controles hors ligne verts, dont la purete du flux stdio et la non-divulgation des secrets. **Aucune recette contre le vrai compte Trustpilot** : la liste blanche des chemins est ecrite a la main, faute de contrat OpenAPI publie, et n'est pas confirmee. `trustpilot.shared.env` pas encore depose |
+| `jira` | Serveur MCP sur les **deux** instances Atlassian du groupe (33 outils) + une skill et six commandes. `vuproject` (le metier : SUPPLY, VUD) et `webfacto` (les developpements), deux referentiels sans rien en commun, une colonne `tenant` sur chaque resultat. Le **contexte JIRA est embarque** - 12 projets, decodeur des titres VUD, epics par chantier, recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte, et le JQL construit est affiche. Agregation cote serveur pour compter, l'API Cloud ne rendant aucun total. **Ecriture bornee a quatre gestes** depuis le 2026-09-02 : creer, mettre a jour, commenter, franchir une transition - liste blanche ou la cle porte le verbe, aucun DELETE expose, rien ne part sans `confirmer=True` apres affichage du corps exact et du compte qui signera | 188 controles hors ligne verts au 2026-09-02, dont le refus de `DELETE` sur le meme chemin qu'un `PUT` autorise et un mouchard qui echoue si une ecriture part sans confirmation. **Rien n'a encore ete confronte a un jeton valide** : ni la lecture, ni a plus forte raison l'ecriture, dont la premiere doit se faire sur un ticket d'essai. Le referentiel de `webfacto` reste a relever. **L'ouverture de l'ecriture n'est pas arbitree en equipe** - le `CLAUDE.md` collectif annonce encore des connecteurs en lecture seule par construction |
+
+> **Ce tableau est encore en retard sur le catalogue.** `marketplace.json` porte
+> aussi `reflex-wms`, `taux-tva`, `taux-de-change` et `indices-eu`, qui n'ont pas
+> de ligne ici. A reprendre par leurs porteurs — on ne decrit pas l'etat de
+> recette du connecteur d'un autre.
 
 ## Installer, cote collegue
 
@@ -39,6 +47,7 @@ Puis, dans les deux cas :
 /plugin install shiptify@vu-transport
 /plugin install yooz-factures@vu-transport
 /plugin install peripass@vu-transport
+/plugin install gisco@vu-transport
 ```
 
 ### La saisie peut attendre
@@ -58,6 +67,11 @@ par connecteur guide de bout en bout :
 Elles regardent ou on en est, disent exactement ou saisir la cle si elle
 manque, la rangent sur la machine, testent la connexion et font un appel de
 demonstration.
+
+`gisco` fait exception : il n'a **aucun identifiant**, GISCO etant un service
+public ouvert. Sa commande de mise en service, `/gisco-cache`, ne demande pas de
+cle : elle rapatrie les couches geographiques, une fois, en annoncant leur poids
+avant de telecharger quoi que ce soit.
 
 Cote Peripass, cette commande a un role de plus : **une seule cle saisie donne
 un connecteur qui repond mais ne couvre que la moitie du perimetre.** Elle le

@@ -65,7 +65,7 @@
     {
       "name": "jira",
       "source": "./plugins/jira",
-      "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique, en lecture seule : vuproject (metier - SUPPLY, VUD) et webfacto (developpement). Le contexte JIRA est embarque - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte, et le JQL genere est affiche pour etre verifiable. Agregation cote serveur pour compter (l'API Jira ne rend aucun total), cache local SQLite interrogeable en SQL, export CSV sur demande. Commandes /jira-projet, /jira-wf et leurs exports. 27 outils.",
+      "description": "Interroge en langage naturel les DEUX instances Atlassian de Vente-unique - vuproject (metier - SUPPLY, VUD) et webfacto (developpement) - et sait y ecrire quatre gestes bornes, jamais sans confirmation. Le contexte JIRA est embarque - les 12 projets de vuproject, le decodeur des titres de tickets VUD, les epics par chantier (Atlas, TIL, lancements pays), les recettes JQL - donc une question en francais devient un JQL juste sans appel de decouverte, et le JQL genere est affiche pour etre verifiable. Agregation cote serveur pour compter (l'API Jira ne rend aucun total), cache local SQLite interrogeable en SQL, export CSV sur demande. ECRITURE : creer un ticket, mettre a jour ses champs, commenter, franchir une transition - la cle de la liste blanche porte le verbe, aucun DELETE n'est expose, et rien ne part sans confirmer=True apres affichage du corps exact. Commandes /jira-projet, /jira-wf et leurs exports. 33 outils, dont 4 qui ecrivent.",
       "version": "1.0.0",
       "category": "connecteur",
       "tags": [
@@ -91,6 +91,73 @@
         "tedb",
         "nomenclature-cn",
         "facturation"
+      ]
+    },
+    {
+      "name": "gisco",
+      "source": "./plugins/gisco",
+      "description": "Interroge le referentiel geographique europeen d'Eurostat (GISCO) en lecture seule : pays, regions NUTS 0 a 3, 98 000 communes LAU, villes et zones urbaines fonctionnelles, 830 000 codes postaux avec leur commune, leur NUTS3 et leur degre d'urbanisation. Rattachement d'un point a sa commune et a sa region par test geometrique, hors ligne, sans GDAL ni geopandas. Le versant britannique, sorti de GISCO apres le Brexit, est charge depuis l'ONS dans les memes tables, et chaque reponse dit de quelle source vient chaque ligne. Cache local SQLite interrogeable en SQL, export CSV sur demande, commandes /gisco-cache et /gisco-export. Les millesimes ne sont pas ecrits en dur : le connecteur decouvre ce qu'Eurostat publie et signale les couches du cache en retard. Aucune cle a saisir : GISCO est un service public ouvert. 20 outils et une skill.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "gisco",
+        "eurostat",
+        "geographie",
+        "nuts",
+        "code-postal",
+        "zonage",
+        "transport"
+      ]
+    },
+    {
+      "name": "taux-de-change",
+      "source": "./plugins/taux-de-change",
+      "description": "Donne le taux de change de chancellerie DGFiP en vigueur a une date, sur 189 devises, depuis l'open data data.economie.gouv.fr. Resout les pieges du jeu de donnees plutot que de les laisser produire des chiffres faux : un taux n'est republie que quand il change, donc filtrer sur le mois courant rend 44 devises sur 189 et l'absence de la livre se lit comme \"pas de taux\" ; le jeu porte une ligne par couple devise/pays, donc compter les lignes ne compte pas des devises ; l'historique annonce depuis 1990 ne devient exploitable qu'a l'ete 2005. Conversion dans les deux sens avec la date d'effet du taux utilise, historique par devise, agregation cote serveur, export CSV sans plafond de pagination. Repli local date quand la source ne repond pas, jamais un taux de memoire. Aucune cle d'API, aucune mise en service : jeu de donnees public, Licence Ouverte Etalab v2.0. 9 outils, une competence et la commande /taux-export.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "taux-de-change",
+        "devise",
+        "dgfip",
+        "chancellerie",
+        "open-data",
+        "facturation"
+      ]
+    },
+    {
+      "name": "indices-eu",
+      "source": "./plugins/indices-eu",
+      "description": "Interroge en lecture seule les trois indices publics qui font bouger un tarif de transport, sur les VINGT pays de livraison de Vente-unique : prix du carburant, inflation harmonisee IPCH, salaire minimum legal. SIX sources, parce que les sources europeennes ne couvrent pas tout le perimetre. Le carburant vient du Weekly Oil Bulletin pour l'Union (hebdomadaire, EUR/1000 l, TTC et HT), de DESNZ / gov.uk pour le Royaume-Uni (hebdomadaire depuis 2003, pence/litre, HT reconstitue depuis l'accise et la TVA d'epoque) et de Statistisk sentralbyra pour la Norvege (mensuel, NOK/litre). La Suisse n'a aucune API publique de prix du carburant : sa mesure est l'indice IPCH du poste CP0722, que le connecteur expose et annonce comme un indice, pas un prix. Le salaire minimum britannique vient de gov.uk, en livres par HEURE - non converti en mensuel, parce que convertir supposerait une duree de travail hebdomadaire. Chaque ligne porte sa source, son unite et sa frequence, et le connecteur ne convertit RIEN faute de taux de change a la date : la comparaison inter-pays passe par indices_variation, dont l'ecart en pourcentage est sans unite. Les pieges qui rendent un chiffre faux sans lever d'erreur sont traites dans le serveur - le Royaume-Uni FIGE en 2020 dans les sources europeennes et non absent, EU contre EUR dans le bulletin, la Grece codee EL chez Eurostat et GR dans le bulletin, un trou Eurostat qui n'est pas un zero, huit pays sans salaire minimum legal, et les deux flux HICP geles depuis fevrier 2026. 9 outils, une competence, les commandes /indices-export et /indices-setup. Outils annotes readOnlyHint conformement a la specification MCP. 153 controles hors ligne.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "gazole",
+        "carburant",
+        "surcharge",
+        "inflation",
+        "salaire-minimum",
+        "eurostat",
+        "desnz",
+        "ssb",
+        "indexation",
+        "royaume-uni",
+        "suisse",
+        "norvege"
+      ]
+    },
+    {
+      "name": "trustpilot",
+      "source": "./plugins/trustpilot",
+      "description": "Lit les avis de service Trustpilot des dix-huit domaines du groupe (Vente-unique et ses quatorze pays, Kauf-unique, Habitat) en lecture seule : avis, notes, TrustScore, reponses de l'entreprise. Interprete les commentaires la ou l'export Trustpilot s'arrete aux lignes : classement thematique dans les onze langues du perimetre, detection des transporteurs cites desambiguisee par pays - Rhenus Italie n'est pas Rhenus Pologne -, selection de verbatims a lire. Le referenceId d'un avis est notre numero de commande : c'est la jointure vers Reflex et Shiptify, donc vers le transporteur reel, et c'est ce que le chemin prive ouvre. Agregation cote serveur (note moyenne, part de 1-2 etoiles, taux et delai de reponse), cache local SQLite interrogeable en SQL pour l'historique, export CSV sur demande explicite. Les pieges qui rendent un chiffre faux sans lever d'erreur sont traites dans le serveur : TrustScore pondere contre note de la periode, nombre d'avis qui n'est pas un volume, petits effectifs, themes lexicaux qui ignorent la negation, norvegien code nb ou no. Aucune ecriture : ni reponse a un avis, ni tag, ni invitation. 22 outils, une competence, les commandes /trustpilot-setup et /trustpilot-export. Outils annotes selon la specification MCP : 17 en lecture seule, 5 qui ecrivent sur le disque du poste (secrets, cache, exports) et le disent.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "trustpilot",
+        "avis-clients",
+        "satisfaction",
+        "verbatim",
+        "qualite-de-service",
+        "transport"
       ]
     }
   ]

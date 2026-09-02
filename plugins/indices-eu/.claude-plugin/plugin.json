@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "indices-eu",
+  "displayName": "Indices europeens (gazole, inflation, salaire minimum)",
+  "version": "1.0.0",
+  "description": "Interroge en lecture seule les trois indices publics qui font bouger un tarif de transport, sur les VINGT pays de livraison de Vente-unique : prix du carburant, inflation harmonisee IPCH, salaire minimum legal. SIX sources, parce que les sources europeennes ne couvrent pas tout le perimetre - Weekly Oil Bulletin pour l'Union (hebdomadaire, EUR/1000 l, TTC et HT), DESNZ / gov.uk pour le Royaume-Uni (hebdomadaire depuis 2003, pence/litre, HT reconstitue depuis l'accise et la TVA d'epoque), Statistisk sentralbyra pour la Norvege (mensuel, NOK/litre), et l'indice IPCH du poste CP0722 pour la Suisse, qui n'a aucune API publique de prix du carburant. Chaque ligne porte sa source, son unite et sa frequence ; le connecteur ne convertit RIEN, faute de taux de change a la date. Aucune authentification : toutes les sources sont ouvertes. 9 outils, une skill, deux commandes.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "gazole",
+    "carburant",
+    "surcharge",
+    "inflation",
+    "ipch",
+    "salaire-minimum",
+    "eurostat",
+    "indexation",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "gasoil_tls": {
+      "type": "string",
+      "title": "Verification du certificat du bulletin petrolier",
+      "description": "LAISSE VIDE. Vide = strict = verification complete, et c'est ce qui marche : verifie le 2026-09-02, le classeur se telecharge en strict. Ce champ n'est qu'un repli. Le 2026-09-01, la Commission servait sur energy.ec.europa.eu un certificat emis pour europa.eu et *.europa.eu seulement, qui ne couvre pas ce sous-domaine, et le telechargement echouait ; elle a corrige le lendemain. Si ca recasse, la valeur 'chaine-seule' garde la verification de la chaine ET exige que le certificat appartienne a europa.eu, mais ne verifie plus le nom d'hote ; chaque reponse qui s'en sert le dit, et le reglage se retire des que la source repond en strict. L'autre issue, sans toucher a TLS : telecharger le classeur a la main et le pointer dans le champ suivant.",
+      "required": false
+    },
+    "gasoil_file": {
+      "type": "string",
+      "title": "Classeur du bulletin petrolier pose a la main (optionnel)",
+      "description": "Chemin d'un Weekly_Oil_Bulletin_Prices_History_maticni_4web.xlsx telecharge dans un navigateur. Le connecteur le lit au lieu d'appeler le reseau, et signale dans chaque reponse qu'il lit un fichier local - pour qu'on pense a verifier sa date.",
+      "required": false
+    },
+    "gasoil_url": {
+      "type": "string",
+      "title": "URL du classeur (optionnel)",
+      "description": "Laisse vide : la valeur d'equipe est dans 08_ENGINE/04_mcp/00_config/indices.shared.env. A renseigner seulement si la Commission a change l'identifiant du document et que le connecteur rend un 404.",
+      "required": false
+    },
+    "pays_defaut": {
+      "type": "string",
+      "title": "Pays rendus par defaut (optionnel)",
+      "description": "Codes separes par des virgules, par exemple FR,BE,NL,DE,ES,IT,PT,PL. Ce sont les pays repondus quand la question n'en nomme aucun. Vide = les principaux pays de livraison de Vente-unique.",
+      "required": false
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.indices-mcp/exports. Ne le pointe pas dans la bibliotheque d'equipe : un CSV depose dans un dossier synchronise part chez tout le monde.",
+      "required": false
+    },
+    "desnz_api": {
+      "type": "string",
+      "title": "API de contenu gov.uk du releve carburant britannique (optionnel)",
+      "description": "Laisse vide. Le Royaume-Uni est fige dans le bulletin europeen depuis le 2020-12-21 ; son prix du carburant vient donc de DESNZ, via l'API de contenu de gov.uk qui resout l'URL courante du CSV - la rotation hebdomadaire de l'asset ne casse donc rien. A renseigner seulement si cette page demenage.",
+      "required": false
+    },
+    "ssb_url": {
+      "type": "string",
+      "title": "URL de la table SSB des prix du carburant norvegiens (optionnel)",
+      "description": "Laisse vide. La Norvege est hors bulletin europeen ; son prix vient de la table 09654 de Statistisk sentralbyra, en couronnes par litre et par mois. Attention si tu la modifies : sans selection explicite des trois variables (valueCodes), l'API rend les 13 derniers mois au lieu de 480, avec un HTTP 200 et sans un mot.",
+      "required": false
+    },
+    "nmw_api": {
+      "type": "string",
+      "title": "API de contenu gov.uk du salaire minimum britannique (optionnel)",
+      "description": "Laisse vide. Eurostat porte encore le Royaume-Uni mais fige a 2020-S2 ; le taux courant vient de gov.uk, en LIVRES PAR HEURE - pas converti en mensuel, parce que convertir supposerait une duree de travail hebdomadaire. A renseigner seulement si la page demenage.",
+      "required": false
+    }
+  }
+}

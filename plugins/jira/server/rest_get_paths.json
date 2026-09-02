@@ -1,5 +1,5 @@
 {
-  "_lisez_moi": "Liste blanche des chemins GET de l'API REST Jira Cloud v3 que ce connecteur accepte d'appeler. Elle est la garantie de lecture seule : jira_get valide le chemin demande contre cette liste, et le serveur n'emet que des GET. Un chemin absent est refuse, meme s'il existe cote Atlassian - c'est volontaire, on ajoute au fur et a mesure du besoin plutot que d'ouvrir toute la surface.",
+  "_lisez_moi": "Liste blanche des chemins GET de l'API REST Jira Cloud v3 que ce connecteur accepte d'appeler. jira_get valide le chemin demande contre cette liste, et n'emet que des GET : aucune ecriture ne passe par l'echappatoire generique. Les quatre gestes d'ecriture ont leur propre liste, rest_write_paths.json, ou la cle porte le VERBE. Un chemin absent d'ici est refuse, meme s'il existe cote Atlassian - c'est volontaire, on ajoute au fur et a mesure du besoin plutot que d'ouvrir toute la surface.",
   "api_version": "Jira Cloud platform REST API v3",
   "source": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/",
   "released": "2026-09-01",
@@ -14,11 +14,34 @@
     "/project/search": {
       "summary": "Les projets visibles, pagines.",
       "parameters": [
-        { "in": "query", "name": "query", "type": "string", "description": "filtre texte sur la cle et le nom" },
-        { "in": "query", "name": "startAt", "type": "integer" },
-        { "in": "query", "name": "maxResults", "type": "integer", "description": "plafond 50" },
-        { "in": "query", "name": "expand", "type": "string", "description": "description,lead,issueTypes,url,projectKeys" },
-        { "in": "query", "name": "orderBy", "type": "string" }
+        {
+          "in": "query",
+          "name": "query",
+          "type": "string",
+          "description": "filtre texte sur la cle et le nom"
+        },
+        {
+          "in": "query",
+          "name": "startAt",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer",
+          "description": "plafond 50"
+        },
+        {
+          "in": "query",
+          "name": "expand",
+          "type": "string",
+          "description": "description,lead,issueTypes,url,projectKeys"
+        },
+        {
+          "in": "query",
+          "name": "orderBy",
+          "type": "string"
+        }
       ]
     },
     "/project/{projectIdOrKey}": {
@@ -36,23 +59,54 @@
     "/issue/{issueIdOrKey}": {
       "summary": "Un ticket. Sans projection, la reponse est enorme : passer fields.",
       "parameters": [
-        { "in": "query", "name": "fields", "type": "string", "description": "liste separee par des virgules, ou *all" },
-        { "in": "query", "name": "expand", "type": "string", "description": "renderedFields,changelog,transitions" }
+        {
+          "in": "query",
+          "name": "fields",
+          "type": "string",
+          "description": "liste separee par des virgules, ou *all"
+        },
+        {
+          "in": "query",
+          "name": "expand",
+          "type": "string",
+          "description": "renderedFields,changelog,transitions"
+        }
       ]
     },
     "/issue/{issueIdOrKey}/comment": {
       "summary": "Les commentaires d'un ticket, pagines. C'est la que vit l'essentiel de l'information d'un ticket VUD.",
       "parameters": [
-        { "in": "query", "name": "startAt", "type": "integer" },
-        { "in": "query", "name": "maxResults", "type": "integer" },
-        { "in": "query", "name": "orderBy", "type": "string", "description": "created ou -created" }
+        {
+          "in": "query",
+          "name": "startAt",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "orderBy",
+          "type": "string",
+          "description": "created ou -created"
+        }
       ]
     },
     "/issue/{issueIdOrKey}/changelog": {
       "summary": "L'historique des changements d'un ticket. La source pour savoir DEPUIS QUAND un ticket est dans son statut.",
       "parameters": [
-        { "in": "query", "name": "startAt", "type": "integer" },
-        { "in": "query", "name": "maxResults", "type": "integer" }
+        {
+          "in": "query",
+          "name": "startAt",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        }
       ]
     },
     "/issue/{issueIdOrKey}/worklog": {
@@ -62,25 +116,64 @@
       "summary": "Les liens externes attaches a un ticket."
     },
     "/issue/{issueIdOrKey}/transitions": {
-      "summary": "Les transitions possibles. EXPOSE EN LECTURE SEULEMENT : savoir qu'une transition existe ne la declenche pas. Le connecteur n'emet aucun POST."
+      "summary": "Les transitions possibles pour CE ticket, maintenant. Savoir qu'une transition existe ne la declenche pas : ce chemin est lu par jira_transitions, et par jira_transition_ticket pour resoudre la transition demandee avant de proposer de la franchir. Le POST correspondant vit dans rest_write_paths.json et exige confirmer=True."
     },
     "/search/jql": {
       "summary": "La recherche par JQL, pagination PAR JETON. C'est l'endpoint moderne : il ne rend AUCUN total, la fin de collection se lit a l'absence de nextPageToken.",
       "parameters": [
-        { "in": "query", "name": "jql", "type": "string", "required": true },
-        { "in": "query", "name": "fields", "type": "string" },
-        { "in": "query", "name": "maxResults", "type": "integer", "description": "plafond 100" },
-        { "in": "query", "name": "nextPageToken", "type": "string" },
-        { "in": "query", "name": "expand", "type": "string" }
+        {
+          "in": "query",
+          "name": "jql",
+          "type": "string",
+          "required": true
+        },
+        {
+          "in": "query",
+          "name": "fields",
+          "type": "string"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer",
+          "description": "plafond 100"
+        },
+        {
+          "in": "query",
+          "name": "nextPageToken",
+          "type": "string"
+        },
+        {
+          "in": "query",
+          "name": "expand",
+          "type": "string"
+        }
       ]
     },
     "/search": {
       "summary": "L'ancienne recherche, pagination startAt/total. RETIREE des instances Cloud recentes : le serveur ne s'en sert qu'en repli si /search/jql rend 404 ou 410.",
       "parameters": [
-        { "in": "query", "name": "jql", "type": "string", "required": true },
-        { "in": "query", "name": "fields", "type": "string" },
-        { "in": "query", "name": "startAt", "type": "integer" },
-        { "in": "query", "name": "maxResults", "type": "integer" }
+        {
+          "in": "query",
+          "name": "jql",
+          "type": "string",
+          "required": true
+        },
+        {
+          "in": "query",
+          "name": "fields",
+          "type": "string"
+        },
+        {
+          "in": "query",
+          "name": "startAt",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        }
       ]
     },
     "/field": {
@@ -98,8 +191,18 @@
     "/issuetype/project": {
       "summary": "Les types de ticket d'un projet.",
       "parameters": [
-        { "in": "query", "name": "projectId", "type": "integer", "required": true },
-        { "in": "query", "name": "level", "type": "integer", "description": "1 epic, 0 standard, -1 sous-tache" }
+        {
+          "in": "query",
+          "name": "projectId",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "in": "query",
+          "name": "level",
+          "type": "integer",
+          "description": "1 epic, 0 standard, -1 sous-tache"
+        }
       ]
     },
     "/priority": {
@@ -114,30 +217,68 @@
     "/label": {
       "summary": "Les etiquettes existantes, paginees. Utile pour ne pas filtrer sur une etiquette qui n'existe pas.",
       "parameters": [
-        { "in": "query", "name": "startAt", "type": "integer" },
-        { "in": "query", "name": "maxResults", "type": "integer" }
+        {
+          "in": "query",
+          "name": "startAt",
+          "type": "integer"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        }
       ]
     },
     "/user/search": {
       "summary": "Cherche une personne. Rend l'accountId, sans lequel aucun filtre JQL par personne nommee ne fonctionne sur Cloud.",
       "parameters": [
-        { "in": "query", "name": "query", "type": "string", "description": "nom d'affichage ou courriel" },
-        { "in": "query", "name": "maxResults", "type": "integer" }
+        {
+          "in": "query",
+          "name": "query",
+          "type": "string",
+          "description": "nom d'affichage ou courriel"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        }
       ]
     },
     "/user/assignable/search": {
       "summary": "Les personnes affectables sur un projet.",
       "parameters": [
-        { "in": "query", "name": "project", "type": "string" },
-        { "in": "query", "name": "query", "type": "string" }
+        {
+          "in": "query",
+          "name": "project",
+          "type": "string"
+        },
+        {
+          "in": "query",
+          "name": "query",
+          "type": "string"
+        }
       ]
     },
     "/filter/search": {
       "summary": "Les filtres enregistres visibles. Un filtre partage porte souvent le JQL juste, deja ecrit par quelqu'un.",
       "parameters": [
-        { "in": "query", "name": "filterName", "type": "string" },
-        { "in": "query", "name": "expand", "type": "string", "description": "jql,description,owner" },
-        { "in": "query", "name": "maxResults", "type": "integer" }
+        {
+          "in": "query",
+          "name": "filterName",
+          "type": "string"
+        },
+        {
+          "in": "query",
+          "name": "expand",
+          "type": "string",
+          "description": "jql,description,owner"
+        },
+        {
+          "in": "query",
+          "name": "maxResults",
+          "type": "integer"
+        }
       ]
     },
     "/filter/{id}": {

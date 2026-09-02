@@ -1,0 +1,164 @@
+{
+  "api_version": "v1",
+  "released": "2026-09-01",
+  "source": "https://developers.trustpilot.com/service-reviews-api/ et /business-units-api/ (releve a la main : Trustpilot ne publie pas de contrat OpenAPI telechargeable)",
+  "note": "Liste blanche des chemins GET atteignables. Elle est ecrite A LA MAIN, contrairement au connecteur Shiptify qui la genere depuis un contrat OpenAPI : Trustpilot n'en publie pas. Consequence a assumer : un chemin qui existe cote Trustpilot mais absent d'ici est refuse par le serveur. C'est le sens voulu de l'erreur - on prefere refuser un chemin non releve plutot que d'emettre un appel dont on ne connait ni les parametres ni la forme de reponse. Pour en ajouter un : le lire dans la documentation, le poser ici avec ses parametres, et dater le releve.",
+  "ecritures_volontairement_absentes": [
+    "POST /v1/private/reviews/{reviewId}/reply - repondre a un avis client",
+    "DELETE /v1/private/reviews/{reviewId}/reply - supprimer une reponse",
+    "POST|PUT|DELETE /v1/private/reviews/{reviewId}/tags - poser ou retirer un tag",
+    "POST /v1/private/reviews/{reviewId}/find-reviewer - contacter l'auteur d'un avis",
+    "POST /v1/private/business-units/{businessUnitId}/email-invitations - invitations",
+    "Toute la Invitations API"
+  ],
+  "pourquoi_pas_d_ecriture": "Repondre publiquement a un avis client, taguer un avis ou contacter son auteur engage la marque devant un client, sur une page publique et indexee. C'est la regle n. 4 du CLAUDE.md de la bibliotheque - l'envoi est un geste humain - et la regle de lecture seule des connecteurs de l'equipe (08_ENGINE/README.md). Ces operations ne sont pas seulement deconseillees : elles ne sont pas exposees, et le serveur n'emet que des GET.",
+  "paths": {
+    "/v1/business-units/find": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Trouve une business unit par son nom de domaine. C'est l'entree du connecteur : un domaine (www.vente-unique.it) rend l'identifiant a 24 caracteres utilise par tous les autres chemins.",
+      "parameters": [
+        {"in": "query", "name": "name", "type": "string", "required": true, "description": "Le nom de domaine, tel qu'il est enregistre chez Trustpilot. Chez nous : la forme avec www."}
+      ]
+    },
+    "/v1/business-units/{businessUnitId}": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Profil public d'une business unit : nom, pays, site, TrustScore, nombre d'avis.",
+      "parameters": []
+    },
+    "/v1/business-units/{businessUnitId}/profileinfo": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "TrustScore, note en etoiles et repartition du nombre d'avis par etoile. C'est la source de la note Trustpilot suivie chaque semaine par le service client.",
+      "parameters": []
+    },
+    "/v1/business-units/{businessUnitId}/web-links": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Liens publics de la page Trustpilot de la business unit, dans une locale donnee.",
+      "parameters": [
+        {"in": "query", "name": "locale", "type": "string", "required": true, "description": "Exemple : fr-FR, de-DE, it-IT."}
+      ]
+    },
+    "/v1/business-units/{businessUnitId}/categories": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Categories Trustpilot de la business unit.",
+      "parameters": [
+        {"in": "query", "name": "country", "type": "string"},
+        {"in": "query", "name": "locale", "type": "string"}
+      ]
+    },
+    "/v1/business-units/search": {
+      "auth": "apikey",
+      "paged": true,
+      "page_param": "page",
+      "per_page_param": "perpage",
+      "summary": "Recherche de business units par terme libre. Sert a retrouver un domaine dont on n'a pas l'orthographe exacte.",
+      "parameters": [
+        {"in": "query", "name": "query", "type": "string", "required": true},
+        {"in": "query", "name": "country", "type": "string"},
+        {"in": "query", "name": "page", "type": "integer"},
+        {"in": "query", "name": "perpage", "type": "integer", "description": "Attention : tout en minuscules sur ce chemin, contrairement au perPage des avis."}
+      ]
+    },
+    "/v1/business-units/{businessUnitId}/reviews": {
+      "auth": "apikey",
+      "paged": true,
+      "page_param": "page",
+      "per_page_param": "perPage",
+      "summary": "Avis de service PUBLICS d'une business unit. Ne porte AUCUN filtre de date : c'est la difference qui compte face au chemin prive.",
+      "parameters": [
+        {"in": "query", "name": "page", "type": "integer", "description": "Commence a 1."},
+        {"in": "query", "name": "perPage", "type": "integer", "description": "100 au maximum."},
+        {"in": "query", "name": "stars", "type": "integer", "enum": [1, 2, 3, 4, 5], "description": "Filtre sur une note. Repetable cote API ; ce serveur n'en envoie qu'une a la fois."},
+        {"in": "query", "name": "language", "type": "string", "description": "Code langue a deux lettres : fr, de, nl, it, es, pt, pl, da, sv, nb, en."},
+        {"in": "query", "name": "orderBy", "type": "string", "enum": ["createdat.asc", "createdat.desc", "stars.asc", "stars.desc"], "description": "createdat.desc permet de lire du plus recent au plus ancien, donc de s'arreter des qu'on sort de la periode demandee."},
+        {"in": "query", "name": "tagGroup", "type": "string"},
+        {"in": "query", "name": "tagValue", "type": "string"},
+        {"in": "query", "name": "responded", "type": "boolean", "description": "true : seulement les avis auxquels l'entreprise a repondu."},
+        {"in": "query", "name": "includeReportedReviews", "type": "boolean"},
+        {"in": "query", "name": "internalLocationId", "type": "string"}
+      ]
+    },
+    "/v1/business-units/{businessUnitId}/all-reviews": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Tous les avis d'une business unit, pagines par jeton de continuation (pageToken) et non par numero de page. Utile la ou la pagination par page plafonne.",
+      "parameters": [
+        {"in": "query", "name": "pageToken", "type": "string", "description": "Jeton rendu par l'appel precedent. Absent au premier appel."}
+      ]
+    },
+    "/v1/reviews/latest": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Les derniers avis publies, toutes business units confondues, dans une ou plusieurs langues.",
+      "parameters": [
+        {"in": "query", "name": "count", "type": "integer", "required": true},
+        {"in": "query", "name": "language", "type": "string", "required": true},
+        {"in": "query", "name": "locale", "type": "string"},
+        {"in": "query", "name": "filterUsersWithoutImages", "type": "boolean"}
+      ]
+    },
+    "/v1/reviews/{reviewId}": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Un avis public, par son identifiant.",
+      "parameters": []
+    },
+    "/v1/reviews/{reviewId}/web-links": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Le lien public d'un avis - celui qu'on met dans un mail ou un ticket.",
+      "parameters": [
+        {"in": "query", "name": "locale", "type": "string", "required": true}
+      ]
+    },
+    "/v1/reviews/{reviewId}/likes": {
+      "auth": "apikey",
+      "paged": false,
+      "summary": "Qui a marque cet avis comme utile.",
+      "parameters": []
+    },
+    "/v1/private/business-units/{businessUnitId}/reviews": {
+      "auth": "oauth",
+      "paged": true,
+      "page_param": "page",
+      "per_page_param": "perPage",
+      "summary": "Avis de service d'une business unit, vue PRIVEE. C'est le chemin de reference du connecteur : il est le seul a porter les bornes de date (startDateTime / endDateTime), le referenceId - notre numero de commande - et le referralEmail.",
+      "parameters": [
+        {"in": "query", "name": "page", "type": "integer", "description": "Commence a 1."},
+        {"in": "query", "name": "perPage", "type": "integer", "description": "100 au maximum."},
+        {"in": "query", "name": "startDateTime", "type": "string", "description": "Borne basse, ISO 8601 (2026-01-01 ou 2026-01-01T00:00:00). Appliquee COTE SERVEUR : la poser divise le trajet."},
+        {"in": "query", "name": "endDateTime", "type": "string", "description": "Borne haute, ISO 8601."},
+        {"in": "query", "name": "stars", "type": "integer", "enum": [1, 2, 3, 4, 5]},
+        {"in": "query", "name": "language", "type": "string"},
+        {"in": "query", "name": "orderBy", "type": "string", "enum": ["createdat.asc", "createdat.desc", "stars.asc", "stars.desc"]},
+        {"in": "query", "name": "responded", "type": "boolean"},
+        {"in": "query", "name": "referenceId", "type": "string", "description": "L'identifiant que NOUS avons envoye a l'invitation - chez nous, le numero de commande. C'est la jointure vers le back-office, Reflex et Shiptify."},
+        {"in": "query", "name": "referralEmail", "type": "string", "description": "L'adresse du client invite. Donnee personnelle : ne se recopie pas dans un livrable."},
+        {"in": "query", "name": "tagGroup", "type": "string"},
+        {"in": "query", "name": "tagValue", "type": "string"},
+        {"in": "query", "name": "ignoreTagValueCase", "type": "boolean"},
+        {"in": "query", "name": "reported", "type": "boolean"},
+        {"in": "query", "name": "source", "type": "string", "description": "Origine de l'avis : invitation, organique."},
+        {"in": "query", "name": "username", "type": "string"},
+        {"in": "query", "name": "findReviewer", "type": "boolean"},
+        {"in": "query", "name": "internalLocationId", "type": "string"}
+      ]
+    },
+    "/v1/private/reviews/{reviewId}": {
+      "auth": "oauth",
+      "paged": false,
+      "summary": "Fiche privee d'un avis : tout le public, plus le statut, le referenceId, le referralEmail, les tags et les donnees de signalement.",
+      "parameters": []
+    },
+    "/v1/private/reviews/{reviewId}/tags": {
+      "auth": "oauth",
+      "paged": false,
+      "summary": "Les tags poses sur un avis, en LECTURE. Poser ou retirer un tag est une ecriture : non exposee.",
+      "parameters": []
+    }
+  }
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP jira : interrogation en LECTURE SEULE de DEUX instances Atlassian.
+MCP jira : interrogation et ecriture bornee sur DEUX instances Atlassian.
 
 Trois usages :
     python server.py            # mode serveur MCP (stdio) - lance par Claude Code
@@ -18,16 +18,52 @@ tickets. Chaque outil prend donc un `tenant`, et le rendu porte toujours la
 colonne `tenant` : sans elle, deux cles de meme numero venues des deux
 instances sont indiscernables.
 
-LECTURE SEULE PAR CONSTRUCTION. Le serveur n'emet que des requetes GET vers
-l'API Jira, et l'outil generique jira_get valide le chemin demande contre la
-liste blanche de rest_get_paths.json. Creer un ticket, commenter, changer un
-statut ou affecter quelqu'un ne se font pas ici : un statut qui bouge dans JIRA
-engage l'equipe, ca reste un geste humain dans l'interface.
+DEUX SURFACES, DEUX LISTES BLANCHES. Le connecteur a ete en lecture seule
+jusqu'au 2026-09-02 ; il ecrit depuis. Ce qui n'a PAS change, c'est le principe :
+aucun appel n'est emis vers un chemin qui n'est pas nomme dans un fichier
+versionne a cote de ce serveur.
 
-La seule requete non-GET du serveur est le renouvellement d'un jeton d'acces
-OAuth aupres de https://auth.atlassian.com/oauth/token, et seulement si le
-tenant est configure en mode `oauth`. Elle ne touche aucune donnee Jira - voir
-_oauth_access_token.
+    rest_get_paths.json     les chemins GET. Lecture.
+    rest_write_paths.json   les chemins d'ecriture, avec leur VERBE. Quatre
+                            gestes, et quatre seulement : creer un ticket,
+                            mettre a jour ses champs, ajouter un commentaire,
+                            franchir une transition.
+
+Le verbe fait partie de l'autorisation : PUT /issue/{k} met a jour, DELETE
+/issue/{k} detruit - meme chemin, deux gestes sans rapport. AUCUN DELETE N'EST
+EXPOSE, ni sur un ticket ni sur un commentaire, et ce n'est pas un oubli : un
+ticket qui n'a pas lieu d'etre se ferme par une transition, ce qui garde la
+trace. La liste des gestes volontairement absents, et leur pourquoi, sont dans
+la section non_exposes de rest_write_paths.json.
+
+TROIS GARDE-FOUS SUR L'ECRITURE, parce qu'un ticket faux dans JIRA est vu par
+toute l'equipe et declenche des automatisations :
+
+  1. **Rien ne part sans `confirmer=True`.** Un appel sans confirmation ne
+     touche pas Jira : il affiche le corps EXACT qui serait envoye, l'instance
+     visee et le compte sous lequel l'action sera tracee. C'est la regle « le
+     geste est humain » du cerveau d'equipe, rendue verifiable.
+  2. **Aucune ecriture n'est rejouee.** Le serveur rejoue un GET sur une
+     coupure reseau ; il ne rejoue JAMAIS un POST. Un POST /issue rejoue apres
+     un delai d'attente, c'est un doublon dans le referentiel, et le connecteur
+     ne peut pas savoir si le premier appel a abouti. Il le dit, et laisse
+     verifier.
+  3. **Rien n'est devine.** Un type de ticket est resolu sur l'instance avant
+     l'appel (jira_types_ticket), une transition est resolue sur les
+     transitions reellement disponibles pour CE ticket, une personne est
+     resolue en accountId. Un nom approche est REFUSE avec la liste des valeurs
+     reelles - il n'est jamais remplace par le plus proche.
+
+La quatrieme requete non-GET du serveur n'a rien a voir avec ces gestes : c'est
+le renouvellement d'un jeton d'acces OAuth aupres de
+https://auth.atlassian.com/oauth/token, si le tenant est en mode `oauth`. Elle
+ne touche aucune donnee Jira - voir _oauth_access_token.
+
+QUI SIGNE L'ECRITURE. Avec les identifiants d'equipe, c'est le compte de
+SERVICE qui apparait dans l'historique du ticket, pas la personne. Acceptable
+pour lire, discutable pour ecrire : chaque outil d'ecriture affiche donc le
+compte tracé avant de confirmer, et rappelle qu'un jeton nominatif pose sur le
+poste passe devant celui de l'equipe. Voir _credential.
 
 AUTHENTIFICATION, TROIS MODES, du plus simple au plus autonome :
 
@@ -145,6 +181,12 @@ NUMERIC_COLUMNS = {"age_jours", "jours_depuis_maj", "commentaires"}
 
 CONTEXTE_FILE = HERE / "contexte_jira.json"
 SPEC_FILE = HERE / "rest_get_paths.json"
+WRITE_SPEC_FILE = HERE / "rest_write_paths.json"
+
+# Les verbes d'ecriture que le serveur sait emettre. PATCH et DELETE n'y sont
+# pas : rien dans rest_write_paths.json ne les demande, et une methode qu'on
+# n'emet pas est une methode qui ne peut pas fuir par une faute de frappe.
+WRITE_METHODS = ("POST", "PUT")
 
 # Dossiers synchronises : un secret n'y vit pas.
 SYNCED_MARKERS = ("/onedrive", "cafom", "sharepoint", "dropbox", "google drive")
@@ -208,15 +250,13 @@ def _get_patterns() -> list[tuple[str, re.Pattern[str]]]:
 _PATTERNS: list[tuple[str, re.Pattern[str]]] | None = None
 
 
-def _check_get_path(path: str) -> tuple[str, str]:
-    """Valide un chemin contre la liste blanche. Rend (chemin_propre, gabarit).
+def _clean_api_path(path: str) -> str:
+    """Normalise un chemin d'API : sans URL, sans racine, sans filtres.
 
-    C'est ici que tient la lecture seule de l'outil generique : un chemin
-    inconnu est refuse, et aucun verbe autre que GET n'est jamais emis.
+    Partage par les deux listes blanches. Une normalisation ecrite deux fois
+    est une normalisation qui diverge, et ici elle decide de ce qui passe : un
+    chemin d'ecriture qui echapperait au nettoyage echapperait a la liste.
     """
-    global _PATTERNS
-    if _PATTERNS is None:
-        _PATTERNS = _get_patterns()
     clean = (path or "").strip()
     if not clean:
         raise JiraError("Chemin vide. Appelle jira_list_paths pour la liste.")
@@ -235,6 +275,20 @@ def _check_get_path(path: str) -> tuple[str, str]:
             "Ne mets pas les filtres dans le chemin : passe-les dans "
             "query_json. Le serveur les encode lui-meme."
         )
+    return clean
+
+
+def _check_get_path(path: str) -> tuple[str, str]:
+    """Valide un chemin contre la liste blanche des GET. Rend (chemin, gabarit).
+
+    Un chemin inconnu est refuse. Cet outil-ci n'emet jamais autre chose qu'un
+    GET : l'ecriture a sa propre liste et ses propres outils, elle ne passe
+    jamais par l'echappatoire generique.
+    """
+    global _PATTERNS
+    if _PATTERNS is None:
+        _PATTERNS = _get_patterns()
+    clean = _clean_api_path(path)
     blocked = _spec().get("non_exposes", {})
     if clean in blocked:
         raise JiraError(f"Chemin volontairement non expose : {blocked[clean]}")
@@ -246,6 +300,128 @@ def _check_get_path(path: str) -> tuple[str, str]:
         "chemins GET de ce connecteur. jira_list_paths donne les chemins "
         "atteignables. Si un chemin manque et qu'il est en lecture, il "
         "s'ajoute dans rest_get_paths.json - ce n'est pas une limite d'API."
+    )
+
+
+# --------------------------------------------------------------------------
+# Liste blanche des chemins d'ECRITURE
+# --------------------------------------------------------------------------
+#
+# Meme mecanique que pour la lecture, avec une difference qui decide de tout :
+# la cle porte le VERBE. PUT /issue/{k} met a jour, DELETE /issue/{k} detruit -
+# le meme chemin, deux gestes sans rapport. Autoriser un chemin sans son verbe,
+# ce serait autoriser la suppression en croyant autoriser la mise a jour.
+#
+# Pas de fichier, pas d'ecriture : si rest_write_paths.json manque, le serveur
+# refuse d'ecrire plutot que de se replier sur une liste ecrite dans le code.
+# Une liste blanche qui vit dans le code est une liste blanche qu'on ne relit
+# pas.
+
+_WRITE_SPEC: dict[str, Any] | None = None
+
+
+def _write_spec() -> dict[str, Any]:
+    global _WRITE_SPEC
+    if _WRITE_SPEC is None:
+        try:
+            _WRITE_SPEC = json.loads(WRITE_SPEC_FILE.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise ConfigError(
+                f"Liste des chemins d'ecriture introuvable ({WRITE_SPEC_FILE}) : "
+                f"{exc}. Ce fichier fait partie du serveur, il est versionne a "
+                "cote de server.py. Sans lui, le connecteur reste en lecture "
+                "seule - c'est le repli voulu."
+            ) from exc
+    return _WRITE_SPEC
+
+
+def _path_pattern(template: str) -> re.Pattern[str]:
+    """Compile un gabarit de chemin : {ceci} vaut un segment, et un seul.
+
+    `[^/]+` et non `.+` : sans l'exclusion du separateur, le gabarit
+    /issue/{k} accepterait /issue/X/attachments, c'est-a-dire exactement ce
+    que la liste blanche est censee arreter.
+    """
+    morceaux = [re.escape(m) for m in re.split(r"\{[a-zA-Z0-9_]+\}", template)]
+    return re.compile("^" + "[^/]+".join(morceaux) + "$")
+
+
+_WRITE_PATTERNS: list[tuple[str, str, re.Pattern[str]]] | None = None
+_WRITE_BLOCKED: list[tuple[str, str, re.Pattern[str]]] | None = None
+
+
+def _compile_write(entries: Any) -> list[tuple[str, str, re.Pattern[str]]]:
+    """Compile des cles « VERBE /chemin » en (verbe, gabarit, motif)."""
+    out: list[tuple[str, str, re.Pattern[str]]] = []
+    for entry in entries:
+        if entry.startswith("_"):
+            continue
+        verbe, _, template = entry.partition(" ")
+        verbe = verbe.strip().upper()
+        template = template.strip()
+        if not verbe or not template.startswith("/"):
+            raise ConfigError(
+                f"Entree de liste blanche d'ecriture mal formee : « {entry} ». "
+                "La forme attendue est « VERBE /chemin » - le verbe fait "
+                "partie de l'autorisation, il n'est pas optionnel."
+            )
+        out.append((verbe, template, _path_pattern(template)))
+    # Le plus specifique d'abord : /issue/{k}/comment avant /issue/{k}.
+    out.sort(key=lambda triple: -len(triple[1]))
+    return out
+
+
+def _check_write_path(method: str, path: str) -> tuple[str, str, dict[str, Any]]:
+    """Valide un couple (verbe, chemin) d'ecriture. Rend (chemin, cle, fiche).
+
+    Point de passage unique de toute ecriture, y compris depuis les outils
+    dedies : un outil qui se tromperait de chemin est arrete ici.
+    """
+    global _WRITE_PATTERNS, _WRITE_BLOCKED
+    if _WRITE_PATTERNS is None:
+        _WRITE_PATTERNS = _compile_write(_write_spec()["paths"])
+    if _WRITE_BLOCKED is None:
+        _WRITE_BLOCKED = _compile_write(_write_spec().get("non_exposes") or {})
+    verbe = (method or "").strip().upper()
+    clean = _clean_api_path(path)
+
+    # D'abord le refus documente : il porte une raison, et une raison vaut
+    # mieux qu'un « chemin inconnu » sur un geste que quelqu'un a deja tranche.
+    for bverbe, btemplate, bpattern in _WRITE_BLOCKED:
+        if bverbe == verbe and bpattern.match(clean):
+            raison = (_write_spec().get("non_exposes") or {}).get(
+                f"{bverbe} {btemplate}", ""
+            )
+            raise JiraError(
+                f"Geste volontairement non expose : {verbe} {clean}. {raison}\n"
+                "Ce n'est pas une limite de l'API Atlassian, c'est une "
+                "decision : elle se rediscute, et elle s'inscrit dans "
+                "rest_write_paths.json."
+            )
+    if verbe not in WRITE_METHODS:
+        raise JiraError(
+            f"Verbe refuse : {verbe or '(vide)'}. Ce serveur n'emet que "
+            f"{', '.join(WRITE_METHODS)} en ecriture, et GET en lecture. "
+            "DELETE et PATCH ne sont pas implementes du tout - une methode "
+            "qu'on n'emet pas ne peut pas fuir par une faute de frappe."
+        )
+    for wverbe, wtemplate, wpattern in _WRITE_PATTERNS:
+        if wverbe == verbe and wpattern.match(clean):
+            cle = f"{wverbe} {wtemplate}"
+            return clean, cle, _write_spec()["paths"][cle]
+    # Le chemin existe peut-etre, mais pas avec ce verbe : le dire, parce que
+    # les deux erreurs ne se corrigent pas de la meme facon.
+    autres = sorted({v for v, _t, p in _WRITE_PATTERNS if p.match(clean)})
+    if autres:
+        raise JiraError(
+            f"Verbe refuse sur ce chemin : {verbe} {clean}. Ce chemin n'est "
+            f"autorise qu'en {', '.join(autres)}. Le verbe fait partie de "
+            "l'autorisation."
+        )
+    raise JiraError(
+        f"Chemin d'ecriture refuse : {verbe} {clean}. Il n'est pas dans "
+        "rest_write_paths.json. jira_list_paths(ecriture=True) donne les "
+        "gestes exposes, et ceux qui ne le sont pas avec leur pourquoi."
     )
 
 
@@ -440,6 +616,17 @@ SHARED_ALLOWED_GLOBALS = frozenset(
         "JIRA_MAX_PAGES",
         "JIRA_TIMEOUT_S",
         "JIRA_DEFAULT_TENANT",
+        # Le couple SANS prefixe de tenant, admis ici depuis le 2026-09-02.
+        # Il vaut pour TOUTES les instances : c'est la reponse au cas reel, ou
+        # le meme compte de service repond sur les deux sites et ou le couple
+        # etait donc ecrit deux fois, a deux endroits qui pouvaient diverger.
+        # Une ligne par instance reste possible et passe devant.
+        "JIRA_EMAIL",
+        "JIRA_TOKEN",
+        "JIRA_AUTH",
+        # Le repli d'un tenant sur les identifiants du tenant par defaut.
+        # Se coupe ici pour toute l'equipe, ou sur un poste, avec la valeur 0.
+        "JIRA_CREDS_FALLBACK",
     }
 )
 
@@ -466,15 +653,18 @@ _SHARED_TENANT_RE = re.compile(
     r"^JIRA_([A-Z0-9_]+?)_(" + "|".join(SHARED_TENANT_SUFFIXES) + r")$"
 )
 
-# Refusees a la lecture du fichier partage, et signalees. Les deux premieres
-# parce qu'elles sont AMBIGUES des qu'il y a deux instances - un jeton sans
-# prefixe de tenant, on ne sait pas a quelle instance il s'applique ; les
-# suivantes parce qu'un chemin valable sur un poste n'existe pas sur les
-# vingt-cinq autres.
+# Refusees a la lecture du fichier partage, et signalees : un chemin valable sur
+# un poste n'existe pas sur les vingt-cinq autres.
+#
+# JIRA_EMAIL et JIRA_TOKEN, sans prefixe de tenant, ETAIENT ici - refuses comme
+# « ambigus des qu'il y a deux instances ». Ils en sont sortis le 2026-09-02,
+# parce que l'ambiguite etait theorique et la duplication reelle : le meme
+# compte de service repondait sur les deux sites, et le couple etait ecrit deux
+# fois dans le meme fichier. Deux copies d'un secret, c'est une rotation qui en
+# oublie une. Le couple sans prefixe s'applique donc a TOUTES les instances, et
+# une ligne prefixee le surcharge instance par instance.
 SHARED_LOCAL_ONLY = frozenset(
     {
-        "JIRA_TOKEN",
-        "JIRA_EMAIL",
         "JIRA_EXPORT_DIR",
         "JIRA_ENV_FILE",
         "JIRA_SHARED_ENV",
@@ -853,6 +1043,8 @@ class Tenant:
         "client_secret",
         "refresh_token",
         "problem",
+        "email_origine",
+        "token_origine",
     )
 
     def __init__(
@@ -868,6 +1060,8 @@ class Tenant:
         client_secret: str = "",
         refresh_token: str = "",
         problem: str = "",
+        email_origine: str = "",
+        token_origine: str = "",
     ) -> None:
         self.code = code
         self.site = site
@@ -880,6 +1074,15 @@ class Tenant:
         self.client_secret = client_secret
         self.refresh_token = refresh_token
         self.problem = problem
+        # D'ou vient chaque moitie du couple. Sert a distinguer un jeton absent
+        # d'un jeton repris de l'autre instance : les deux rendent un 401.
+        self.email_origine = email_origine
+        self.token_origine = token_origine
+
+    @property
+    def identifiants_repris(self) -> bool:
+        """Le couple vient-il, en tout ou partie, d'une autre instance ?"""
+        return "REPRIS" in self.email_origine or "REPRIS" in self.token_origine
 
     @property
     def ready(self) -> bool:
@@ -908,6 +1111,86 @@ def _declared_tenants() -> list[str]:
     return [c for c in codes if c]
 
 
+# --------------------------------------------------------------------------
+# Les identifiants d'un tenant : trois etages, et un repli assume
+# --------------------------------------------------------------------------
+#
+# Le probleme reel, constate le 2026-09-02 sur jira.shared.env : le meme compte
+# de service repond sur vuproject ET sur webfacto, et le couple courriel + jeton
+# y etait donc ecrit DEUX FOIS, prefixe une fois par instance. Deux copies d'un
+# secret, ce n'est pas deux fois plus sur - c'est une rotation qui en oublie
+# une, et un poste qui marche sur une instance et pas sur l'autre sans que
+# personne ne comprenne pourquoi.
+#
+# D'ou la chaine ci-dessous, essayee dans cet ordre pour chaque champ :
+#
+#   1. JIRA_<TENANT>_EMAIL / _TOKEN   l'instance decide pour elle-meme
+#   2. JIRA_EMAIL / JIRA_TOKEN        un seul couple pour TOUTES les instances
+#   3. JIRA_<DEFAUT>_EMAIL / _TOKEN   le repli : le tenant par defaut fait foi
+#
+# Chaque etage traverse lui-meme les trois niveaux de _env : configuration du
+# plugin, puis jira.env du poste, puis fichier d'equipe. Un jeton NOMINATIF pose
+# sur le poste bat donc toujours le compte de service de l'equipe, y compris
+# instance par instance - c'est la sortie pour tracer une ecriture sous son
+# propre nom, et elle est verifiee dans test_offline.py.
+#
+# LE REPLI SE VOIT. Un jeton emis pour vuproject n'a aucune raison d'etre
+# accepte par webfacto : un compte doit avoir ete invite sur chaque instance.
+# Reprendre le jeton du tenant par defaut est donc un PARI, pas une garantie -
+# il paie quand c'est un compte de service present sur les deux sites, il rend
+# 401 sinon. Le connecteur ne le fait donc jamais en silence : l'origine de
+# chaque champ est portee par le Tenant, dite par jira_setup_status et
+# jira_doctor, et rappelee dans le message du 401. Un 401 dont on ignore quel
+# jeton a ete envoye est un 401 qu'on ne corrige pas.
+#
+# POUR LE COUPER : JIRA_CREDS_FALLBACK=0, sur le poste ou pour l'equipe. Le
+# tenant non renseigne redevient alors proprement « non configure » plutot que
+# de rendre un 401 - c'est ce qu'on veut quand on sait que le compte n'existe
+# pas sur la seconde instance.
+
+FAUX = {"0", "non", "no", "false", "off", "aucun"}
+
+
+def _creds_fallback() -> bool:
+    """Le repli d'un tenant sur les identifiants du tenant par defaut est-il actif ?"""
+    return (_env("JIRA_CREDS_FALLBACK") or "1").strip().lower() not in FAUX
+
+
+def _default_tenant_code() -> str:
+    """Le tenant qui sert de repli. JIRA_DEFAULT_TENANT, sinon le premier declare.
+
+    « Premier declare » et non « PROJET » en dur : une troisieme instance, ou un
+    poste qui n'a acces qu'a webfacto, ne doivent pas dependre d'un nom ecrit
+    dans le code.
+    """
+    explicite = _tenant_code(_env("JIRA_DEFAULT_TENANT"))
+    if explicite:
+        return explicite
+    declares = _declared_tenants()
+    return declares[0] if declares else ""
+
+
+def _credential(code: str, suffixe: str) -> tuple[str, str]:
+    """Un champ d'identification d'un tenant. Rend (valeur, origine lisible).
+
+    L'origine n'est pas cosmetique : c'est ce qui distingue « le jeton est
+    absent » de « le jeton est celui de l'autre instance, repris par defaut »,
+    et ces deux situations rendent le meme 401.
+    """
+    propre = _env(f"JIRA_{code}_{suffixe}")
+    if propre:
+        return propre, f"propre a {code}"
+    commun = _env(f"JIRA_{suffixe}")
+    if commun:
+        return commun, f"commun a toutes les instances (JIRA_{suffixe})"
+    defaut = _default_tenant_code()
+    if _creds_fallback() and defaut and defaut != code:
+        herite = _env(f"JIRA_{defaut}_{suffixe}")
+        if herite:
+            return herite, f"REPRIS de {defaut}, faute de valeur propre a {code}"
+    return "", "(aucune)"
+
+
 def _describe_tenant(code: str) -> Tenant:
     """Resout la configuration d'un tenant. Ne leve pas : il porte son probleme."""
     ctx = _contexte_tenants().get(code) or {}
@@ -915,19 +1198,31 @@ def _describe_tenant(code: str) -> Tenant:
         ctx.get("site") or ""
     )
     label = _env(f"JIRA_{code}_LABEL") or str(ctx.get("label") or "")
-    auth = (_env(f"JIRA_{code}_AUTH") or "basic").strip().lower()
-    email = _env(f"JIRA_{code}_EMAIL")
-    token = _env(f"JIRA_{code}_TOKEN")
+    # JIRA_AUTH sans prefixe vaut pour toutes les instances : deux sites du
+    # meme groupe s'authentifient de la meme facon dans le cas courant.
+    auth = (
+        _env(f"JIRA_{code}_AUTH") or _env("JIRA_AUTH") or "basic"
+    ).strip().lower()
     cloud_id = _env(f"JIRA_{code}_CLOUD_ID") or str(ctx.get("cloud_id") or "")
     client_id = _env(f"JIRA_{code}_CLIENT_ID")
     client_secret = _env(f"JIRA_{code}_CLIENT_SECRET")
     refresh = _env(f"JIRA_{code}_REFRESH_TOKEN")
 
-    # Repli mono-tenant : un poste qui n'a acces qu'a une instance n'a pas a
-    # prefixer ses deux lignes de configuration.
-    if len(_declared_tenants()) == 1:
-        email = email or _env("JIRA_EMAIL")
-        token = token or _env("JIRA_TOKEN")
+    # Le couple courriel + jeton, par la chaine a trois etages de _credential :
+    # valeur propre au tenant, sinon couple commun, sinon celui du tenant par
+    # defaut. Les deux moities sont resolues SEPAREMENT : un poste peut avoir
+    # son propre courriel sur une instance et reprendre le jeton commun.
+    #
+    # Le mode oauth est HORS de cette chaine, et ce n'est pas un oubli : ses
+    # deux secrets tournent a chaque renouvellement et n'ont qu'un detenteur
+    # possible. Les reprendre d'une autre instance les casserait des deux
+    # cotes. Un tenant en oauth se configure entierement pour lui-meme.
+    if auth == "oauth":
+        email, email_origine = _env(f"JIRA_{code}_EMAIL"), f"propre a {code}"
+        token, token_origine = _env(f"JIRA_{code}_TOKEN"), f"propre a {code}"
+    else:
+        email, email_origine = _credential(code, "EMAIL")
+        token, token_origine = _credential(code, "TOKEN")
 
     problem = ""
     if auth not in {"basic", "bearer", "oauth"}:
@@ -943,13 +1238,25 @@ def _describe_tenant(code: str) -> Tenant:
         )
     elif auth == "basic" and not email:
         problem = (
-            f"courriel absent (JIRA_{code}_EMAIL). En mode basic, Jira Cloud "
-            "attend le COUPLE courriel + jeton d'API : le jeton seul rend 401."
+            f"courriel absent. En mode basic, Jira Cloud attend le COUPLE "
+            "courriel + jeton d'API : le jeton seul rend 401. Trois facons de "
+            f"le poser, de la plus precise a la plus large : JIRA_{code}_EMAIL "
+            "pour cette instance seule, JIRA_EMAIL pour toutes les instances, "
+            f"ou celui de {_default_tenant_code() or 'defaut'} "
+            "qui serait repris par defaut"
+            + ("" if _creds_fallback() else " - repli desactive par JIRA_CREDS_FALLBACK=0")
+            + "."
         )
     elif auth == "basic" and not token:
-        problem = f"jeton d'API absent (JIRA_{code}_TOKEN)"
+        problem = (
+            f"jeton d'API absent (JIRA_{code}_TOKEN pour cette instance, ou "
+            "JIRA_TOKEN pour toutes)"
+        )
     elif auth == "bearer" and not token:
-        problem = f"jeton d'acces absent (JIRA_{code}_TOKEN)"
+        problem = (
+            f"jeton d'acces absent (JIRA_{code}_TOKEN pour cette instance, ou "
+            "JIRA_TOKEN pour toutes)"
+        )
     elif auth == "oauth" and not (client_id and client_secret and refresh):
         manque = [
             nom
@@ -986,6 +1293,8 @@ def _describe_tenant(code: str) -> Tenant:
         client_secret,
         refresh,
         problem,
+        email_origine,
+        token_origine,
     )
 
 
@@ -1124,19 +1433,43 @@ def _stored_values() -> dict[str, str]:
         return {}
 
 
-def _key_source(code: str) -> str:
-    """D'ou sort le jeton d'un tenant : la premiere question quand ca ne marche pas."""
+def _value_source(name: str) -> str:
+    """Quelle COUCHE fournit la variable `name`. Rend "" si personne ne la pose."""
     _load_env_file()
-    name = f"JIRA_{code}_TOKEN"
-    if not os.environ.get(name):
-        if _load_shared_env().get(name):
-            return f"config d'equipe ({_SHARED_LOADED_FROM})"
-        return "(aucun)"
-    if name in _ENV_FILE_KEYS:
-        return f"fichier {_ENV_LOADED_FROM}"
-    if os.environ.get("CLAUDE_PLUGIN_ROOT"):
-        return "configuration du plugin (userConfig)"
-    return "environnement du processus"
+    if os.environ.get(name):
+        if name in _ENV_FILE_KEYS:
+            return f"fichier {_ENV_LOADED_FROM}"
+        if os.environ.get("CLAUDE_PLUGIN_ROOT"):
+            return "configuration du plugin (userConfig)"
+        return "environnement du processus"
+    if _load_shared_env().get(name):
+        return f"config d'equipe ({_SHARED_LOADED_FROM})"
+    return ""
+
+
+def _credential_names(code: str, suffixe: str) -> list[str]:
+    """Les variables essayees pour un champ d'identification, dans l'ordre."""
+    noms = [f"JIRA_{code}_{suffixe}", f"JIRA_{suffixe}"]
+    defaut = _default_tenant_code()
+    if _creds_fallback() and defaut and defaut != code:
+        noms.append(f"JIRA_{defaut}_{suffixe}")
+    return noms
+
+
+def _key_source(code: str, suffixe: str = "TOKEN") -> str:
+    """D'ou sort le jeton d'un tenant : la premiere question quand ca ne marche pas.
+
+    Rend la VARIABLE qui a repondu et la COUCHE qui la porte. Les deux comptent :
+    savoir que le jeton vient du fichier d'equipe ne suffit pas s'il vient de la
+    ligne de l'AUTRE instance, reprise par defaut - c'est la cause d'un 401 qui,
+    sans cette precision, ressemble a un mauvais jeton.
+    """
+    for name in _credential_names(code, suffixe):
+        source = _value_source(name)
+        if source:
+            marque = "" if name.startswith(f"JIRA_{code}_") else "  <- repli"
+            return f"{name} ({source}){marque}"
+    return "(aucun)"
 
 
 def _restrict_permissions(path: pathlib.Path) -> str:
@@ -1229,8 +1562,9 @@ def _write_key_store(values: dict[str, str]) -> tuple[pathlib.Path, str]:
 #     C'est ce que fait la fonction ci-dessous.
 #
 # La requete est un POST, mais vers le service d'authentification Atlassian, pas
-# vers l'API Jira : elle ne cree, ne modifie et ne supprime aucune donnee. La
-# regle de lecture seule du connecteur reste entiere.
+# vers l'API Jira : elle ne cree, ne modifie et ne supprime aucune donnee. Elle
+# ne passe donc ni par la liste blanche d'ecriture, ni par la confirmation - il
+# n'y a rien a confirmer, rien ne change chez personne.
 #
 # ROTATION. Atlassian rend souvent un NOUVEAU refresh token a chaque
 # renouvellement, et invalide le precedent. Ne pas le persister, c'est marcher
@@ -1403,28 +1737,69 @@ def _jira_errors(resp: httpx.Response) -> str:
 
 
 def _request(
-    tenant: Tenant, path: str, query: dict[str, Any] | None = None
+    tenant: Tenant,
+    path: str,
+    query: dict[str, Any] | None = None,
+    method: str = "GET",
+    body: Any = None,
 ) -> Any:
-    """Un GET sur l'API du tenant. Le SEUL verbe emis vers Jira."""
+    """Un appel sur l'API du tenant. GET par defaut, POST et PUT bornes.
+
+    DEUX REGIMES DE REPRISE, et c'est le garde-fou n° 2 du connecteur :
+
+      - un GET est REJOUE sur une coupure reseau, un 429 ou un 5xx. Le rejouer
+        ne change rien a l'etat de Jira, donc c'est gratuit.
+      - une ECRITURE n'est JAMAIS rejouee, pas meme sur un 429 ou elle serait
+        pourtant sans risque. La regle n'a pas d'exception parce qu'une regle
+        sans exception se tient : un POST /issue rejoue apres un delai
+        d'attente, c'est un doublon dans le referentiel, et le serveur ne peut
+        pas savoir si le premier appel a abouti - Jira n'expose pas de cle
+        d'idempotence sur ces chemins. Il rend l'erreur en le disant, et
+        laisse verifier.
+    """
     if not tenant.ready:
         raise ConfigError(f"Tenant {tenant.code} non configure : {tenant.problem}")
+    verbe = (method or "GET").strip().upper()
+    ecriture = verbe != "GET"
+    if ecriture:
+        # Defense en profondeur : meme appele par un outil dedie qui a deja
+        # verifie, un chemin d'ecriture repasse par la liste blanche. Un outil
+        # qui se tromperait de chemin ne peut pas sortir de la liste.
+        _check_write_path(verbe, path)
     params = _clean_query(query)
     url = tenant.api_base + path
     kwargs = _auth_kwargs(tenant)
+    if ecriture:
+        kwargs["json"] = {} if body is None else body
     resp: httpx.Response | None = None
     last_error = ""
-    for attempt in range(RETRY_ATTEMPTS):
+    tentatives = 1 if ecriture else RETRY_ATTEMPTS
+    for attempt in range(tentatives):
         try:
-            resp = _client().get(url, params=params, **kwargs)
+            resp = _client().request(verbe, url, params=params, **kwargs)
         except httpx.HTTPError as exc:
             last_error = str(exc)
-            if attempt >= RETRY_ATTEMPTS - 1:
+            if ecriture:
+                raise JiraError(
+                    f"[{tenant.code}] {verbe} {path} : la requete n'a pas "
+                    f"abouti ({exc}).\nCE N'EST PAS UNE GARANTIE QUE RIEN N'A "
+                    "ETE ECRIT : la coupure peut avoir eu lieu apres que Jira "
+                    "a traite l'appel. Le serveur ne rejoue pas une ecriture, "
+                    "il creerait un doublon. Va verifier dans Jira - "
+                    "jira_issue, jira_comments ou jira_recherche - avant de "
+                    "relancer."
+                ) from exc
+            if attempt >= tentatives - 1:
                 raise JiraError(
                     f"[{tenant.code}] appel {path} impossible : {exc}"
                 ) from exc
             time.sleep(0.5 * (attempt + 1))
             continue
-        if resp.status_code in RETRY_STATUSES and attempt < RETRY_ATTEMPTS - 1:
+        if (
+            not ecriture
+            and resp.status_code in RETRY_STATUSES
+            and attempt < tentatives - 1
+        ):
             # Jira rend un Retry-After sur 429 : on l'honore, borne a 10 s.
             wait = 0.5 * (2 ** attempt)
             if resp.status_code == 429:
@@ -1444,6 +1819,18 @@ def _request(
             break
 
     code = resp.status_code
+    if code == 400 and ecriture:
+        raise JiraError(
+            f"[{tenant.code}] HTTP 400 sur {verbe} {path} : corps refuse par "
+            "Jira. RIEN N'A ETE ECRIT.\n"
+            f"Ce que Jira repond : {_jira_errors(resp)}\n"
+            "Jira nomme le champ fautif, et c'est presque toujours l'une de "
+            "ces quatre causes : un champ qui n'existe pas sur l'ecran de "
+            "creation de CE projet, une valeur hors de sa liste, un champ "
+            "obligatoire absent, ou un type de ticket qui n'appartient pas au "
+            "projet. jira_types_ticket donne les types reels du projet, "
+            "jira_fields les champs de l'instance."
+        )
     if code == 400:
         raise JiraError(
             f"[{tenant.code}] HTTP 400 sur {path} : requete refusee par Jira.\n"
@@ -1480,10 +1867,21 @@ def _request(
             "jira_doctor dit d'ou vient le jeton actuellement utilise."
         )
     if code == 403:
+        nuance = ""
+        if ecriture:
+            nuance = (
+                "\nRIEN N'A ETE ECRIT. Sur une ecriture, la cause la plus "
+                "frequente n'est pas une faute de configuration : le compte "
+                "peut LIRE ce projet sans avoir le droit d'y ecrire. C'est "
+                "meme le provisionnement recommande pour le compte de service "
+                "de l'equipe. Pour ecrire - et pour que Jira trace sous ton "
+                "nom - pose un jeton nominatif dans la configuration du "
+                "plugin : il passe DEVANT le compte d'equipe."
+            )
         raise JiraError(
-            f"[{tenant.code}] HTTP 403 sur {path} : authentifie, mais sans "
-            "droit sur cette ressource.\n"
-            f"Ce que Jira repond : {_jira_errors(resp)}\n"
+            f"[{tenant.code}] HTTP 403 sur {verbe} {path} : authentifie, mais "
+            "sans droit sur cette ressource.\n"
+            f"Ce que Jira repond : {_jira_errors(resp)}{nuance}\n"
             "A distinguer du 401 : ici le compte est reconnu. Soit le projet "
             "n'est pas visible pour ce compte, soit l'instance demande une "
             "re-authentification par le navigateur (Jira le fait apres "
@@ -1504,6 +1902,17 @@ def _request(
             "/search/jql. Si le message apparait ailleurs, la liste blanche de "
             "rest_get_paths.json est a mettre a jour."
         )
+    if code == 429 and ecriture:
+        raise JiraError(
+            f"[{tenant.code}] HTTP 429 sur {verbe} {path} : quota d'appels "
+            "atteint. RIEN N'A ETE ECRIT - Jira refuse avant de traiter. Le "
+            "serveur ne rejoue pas, meme ici ou ce serait sans risque : la "
+            "regle « une ecriture ne se rejoue pas » n'a pas d'exception, "
+            "c'est ce qui la rend tenable. Relance l'appel toi-meme dans "
+            f"{resp.headers.get('Retry-After', 'quelques')} s. Le quota est "
+            "compte par COMPTE : avec le compte de service, il est partage "
+            "entre tous les postes de l'equipe."
+        )
     if code == 429:
         raise JiraError(
             f"[{tenant.code}] HTTP 429 : quota d'appels atteint. Jira Cloud "
@@ -1514,8 +1923,16 @@ def _request(
             f"{resp.headers.get('Retry-After', 'non precisee')} s."
         )
     if code >= 400:
+        doute = ""
+        if ecriture and code >= 500:
+            doute = (
+                "\nUN 5xx SUR UNE ECRITURE EST AMBIGU : Jira a peut-etre "
+                "traite l'appel avant de tomber. Verifie dans Jira avant de "
+                "relancer - le serveur ne rejoue pas une ecriture."
+            )
         raise JiraError(
-            f"[{tenant.code}] HTTP {code} sur {path} | {_jira_errors(resp)}"
+            f"[{tenant.code}] HTTP {code} sur {verbe} {path} | "
+            f"{_jira_errors(resp)}{doute}"
         )
 
     if not resp.content:
@@ -2922,26 +3339,70 @@ def jira_contexte(sujet: str = "") -> str:
 
 @mcp.tool()
 @_guard
-def jira_list_paths(contains: str = "") -> str:
-    """Liste les chemins GET atteignables par jira_get, et leurs parametres.
+def jira_list_paths(contains: str = "", ecriture: bool = False) -> str:
+    """Liste les chemins de l'API que ce connecteur accepte d'appeler.
+
+    Par defaut, les chemins GET atteignables par jira_get. `ecriture=True`
+    donne l'autre liste : les quatre gestes d'ecriture exposes, avec leur
+    VERBE, et ceux qui ne le sont PAS avec leur pourquoi.
 
     A appeler avant jira_get, pour ne pas deviner un chemin ou un nom de
     filtre. `contains` filtre sur le chemin ou le resume.
 
-    Un chemin absent de cette liste est refuse. Ce n'est pas une limite de
-    l'API Atlassian, c'est le choix de n'exposer que ce dont on a besoin, en
-    lecture.
+    Un chemin absent de ces listes est refuse. Ce n'est pas une limite de
+    l'API Atlassian, c'est le choix de n'exposer que ce dont on a besoin.
     """
-    spec = _spec()
     needle = contains.strip().lower()
+    if ecriture:
+        wspec = _write_spec()
+        lines = [
+            f"Chemins d'ECRITURE autorises ({len(wspec['paths'])} gestes, "
+            f"releve {wspec.get('released')})",
+            f"Source : {wspec.get('source')}",
+            f"Racine ajoutee par le serveur : {wspec.get('racine')}",
+            "",
+            "LA CLE PORTE LE VERBE, et ce n'est pas cosmetique : PUT "
+            "/issue/{k} met a jour, DELETE /issue/{k} detruit - le meme "
+            "chemin, deux gestes sans rapport. AUCUN DELETE N'EST EXPOSE.",
+            "",
+            "Aucune ecriture ne part sans confirmer=True : l'appel sans "
+            "confirmation affiche le corps exact et s'arrete.",
+            "",
+        ]
+        montres = 0
+        for cle in sorted(wspec["paths"]):
+            info = wspec["paths"][cle]
+            resume = info.get("summary", "")
+            if needle and needle not in cle.lower() and needle not in resume.lower():
+                continue
+            montres += 1
+            lines.append(f"{cle}")
+            lines.append(f"    outil     : {info.get('outil', '(aucun)')}")
+            lines.append(f"    ce qu'il fait : {resume}")
+            if info.get("corps"):
+                lines.append(f"    corps     : {info['corps']}")
+            if info.get("attention"):
+                lines.append(f"    ATTENTION : {info['attention']}")
+        if not montres:
+            lines.append(f"(aucun geste ne correspond a '{contains}')")
+        lines.append("")
+        lines.append("Volontairement NON exposes :")
+        for cle, raison in (wspec.get("non_exposes") or {}).items():
+            if cle.startswith("_"):
+                continue
+            lines.append(f"  {cle} : {raison}")
+        return "\n".join(lines)
+
+    spec = _spec()
     lines = [
         f"Chemins GET autorises ({len(spec['paths'])} au total, releve "
         f"{spec.get('released')})",
         f"Source : {spec.get('source')}",
         f"Racine ajoutee par le serveur : {spec.get('racine')}",
         "",
-        "LECTURE SEULE : aucun POST, PUT ni DELETE n'est atteignable par ce "
-        "connecteur, y compris par jira_get.",
+        "jira_get n'emet QUE des GET : aucune ecriture ne passe par "
+        "l'echappatoire generique. Les gestes d'ecriture ont leur propre "
+        "liste et leurs propres outils - jira_list_paths(ecriture=True).",
         "",
     ]
     shown = 0
@@ -3923,6 +4384,895 @@ def jira_summary(
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------
+# ECRIRE : quatre gestes, trois garde-fous
+# --------------------------------------------------------------------------
+#
+# Ce qui suit est la seule partie du connecteur qui CHANGE quelque chose chez
+# quelqu'un d'autre. Un ticket cree, un commentaire pose, un statut qui bouge :
+# c'est vu par toute l'equipe, ca part en notification, et ca peut declencher
+# une automatisation Jira. D'ou la forme de chaque outil, identique aux quatre :
+#
+#   1. VALIDER EN LOCAL D'ABORD. Une cle mal formee, un titre vide, une
+#      etiquette avec un espace, un champ interdit : refuses avant le moindre
+#      appel reseau. Un refus qui ne coute pas d'appel est un refus qu'on peut
+#      se permettre de rendre strict.
+#   2. RESOUDRE, JAMAIS DEVINER. Le type de ticket, la priorite, la transition
+#      et la personne sont relus sur l'instance et compares a l'identique. Un
+#      nom approchant est REFUSE avec la liste des valeurs reelles - il n'est
+#      jamais remplace par le plus proche. « Tache » au lieu de « Task » cree
+#      un ticket du mauvais type sans lever d'erreur.
+#   3. MONTRER, PUIS CONFIRMER. Sans confirmer=True, l'outil affiche le corps
+#      EXACT qui partirait, l'instance visee et le compte qui signera, et
+#      s'arrete. C'est la regle « l'envoi est un geste humain » du cerveau
+#      d'equipe, rendue verifiable : on ne demande pas de croire un resume.
+
+
+def _adf_depuis_texte(texte: str, quoi: str = "le texte") -> dict[str, Any]:
+    """Construit un document ADF a partir de texte simple.
+
+    Jira Cloud v3 n'accepte plus une description ni un commentaire en texte
+    brut : le corps est de l'ADF, un arbre JSON. Et le piege est silencieux -
+    une chaine posee dans le champ ne leve pas toujours d'erreur, elle
+    enregistre un contenu vide. La conversion se fait donc ici, une seule
+    fois, pour les deux outils qui en ont besoin.
+
+    Une ligne vide separe deux paragraphes ; un simple retour a la ligne
+    devient un hardBreak, comme dans l'editeur Jira.
+    """
+    brut = (texte or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not brut:
+        raise JiraError(f"{quoi} est vide : il n'y a rien a ecrire.")
+    contenu: list[dict[str, Any]] = []
+    for para in re.split(r"\n\s*\n", brut):
+        noeuds: list[dict[str, Any]] = []
+        for i, ligne in enumerate(para.split("\n")):
+            if i:
+                noeuds.append({"type": "hardBreak"})
+            if ligne:
+                noeuds.append({"type": "text", "text": ligne})
+        if noeuds:
+            contenu.append({"type": "paragraph", "content": noeuds})
+    if not contenu:
+        raise JiraError(f"{quoi} ne contient que des espaces.")
+    return {"type": "doc", "version": 1, "content": contenu}
+
+
+def _cle_ticket(cle: str) -> str:
+    """Valide une cle de ticket. PROJET-NUMERO, rien d'autre."""
+    reference = (cle or "").strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+", reference):
+        raise JiraError(
+            f"« {cle} » n'est pas une cle de ticket. Une cle s'ecrit "
+            "PROJET-NUMERO, par exemple SUPPLY-3527. Rappel : une cle n'a de "
+            "sens que dans SON instance."
+        )
+    return reference
+
+
+def _cle_projet(projet: str) -> str:
+    """Valide une CLE de projet. Pour ecrire, un nom approchant ne suffit pas.
+
+    En lecture, _projet_jql accepte « les incidents » ou « supply » et traduit.
+    Ici non : creer un ticket dans le mauvais projet ne se corrige pas d'un
+    filtre, ca laisse un ticket a deplacer a la main. On exige donc la cle.
+    """
+    brut = (projet or "").strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,19}", brut):
+        raise JiraError(
+            f"« {projet} » n'est pas une cle de projet. Pour ECRIRE, le "
+            "connecteur exige la cle exacte - SUPPLY, VUD - et non un nom "
+            "approchant : un ticket cree dans le mauvais projet se deplace a "
+            "la main. jira_projects donne les cles reelles de l'instance."
+        )
+    return brut
+
+
+def _etiquettes(valeur: str, quoi: str = "etiquettes") -> list[str]:
+    """Decoupe une liste d'etiquettes, et refuse celles que Jira refusera.
+
+    Jira interdit l'espace dans une etiquette et rend un 400 peu clair. Le
+    dire ici coute un appel de moins et une minute de moins.
+    """
+    out: list[str] = []
+    for morceau in (valeur or "").replace(";", ",").split(","):
+        etiquette = morceau.strip()
+        if not etiquette:
+            continue
+        if re.search(r"\s", etiquette):
+            raise JiraError(
+                f"Etiquette refusee : « {etiquette} ». Jira n'accepte pas "
+                f"d'espace dans une etiquette ({quoi}) - utilise un tiret ou "
+                "un souligne."
+            )
+        out.append(etiquette)
+    return out
+
+
+# Les champs qui ont leur propre parametre, et ne se posent donc pas dans
+# champs_json : deux chemins pour la meme valeur, c'est une valeur qui gagne
+# sans qu'on sache laquelle.
+CHAMPS_RESERVES = {
+    "project": "le parametre projet",
+    "issuetype": "le parametre type_ticket",
+    "summary": "le parametre titre",
+    "description": "le parametre description",
+    "assignee": "le parametre assigne",
+    "priority": "le parametre priorite",
+    "labels": "le parametre etiquettes",
+    "parent": "le parametre parent",
+    "duedate": "le parametre echeance",
+}
+
+
+def _champs_libres(champs_json: str) -> dict[str, Any]:
+    """Les champs personnalises passes en JSON. Valide, et refuse le statut."""
+    try:
+        extra = json.loads(champs_json or "{}")
+    except ValueError as exc:
+        raise JiraError(f"champs_json n'est pas du JSON valide : {exc}") from exc
+    if not isinstance(extra, dict):
+        raise JiraError(
+            "champs_json doit etre un objet JSON, de la forme "
+            '{"customfield_10010": "valeur"}.'
+        )
+    for nom in extra:
+        court = str(nom).strip().lower()
+        if court in {"status", "statut", "resolution"}:
+            raise JiraError(
+                f"« {nom} » ne se pose pas comme un champ : un statut ne "
+                "s'ecrit pas, il se FRANCHIT. Passe par "
+                "jira_transition_ticket, qui resout la transition sur celles "
+                "reellement disponibles pour ce ticket. C'est aussi la seule "
+                "facon dont Jira l'accepte."
+            )
+        if court in CHAMPS_RESERVES:
+            raise JiraError(
+                f"« {nom} » a son propre parametre : utilise "
+                f"{CHAMPS_RESERVES[court]}. Deux chemins pour la meme valeur, "
+                "c'est une valeur qui gagne sans qu'on sache laquelle."
+            )
+    return extra
+
+
+def _signataire(tenant: Tenant) -> str:
+    """Sous quel compte l'ecriture sera tracee, et d'ou vient ce compte.
+
+    Ce n'est pas une precaution decorative : avec les identifiants d'equipe,
+    l'historique du ticket porte le nom du compte de SERVICE, pas celui de la
+    personne. Acceptable pour lire, discutable pour ecrire - donc affiche
+    avant chaque confirmation, avec la sortie.
+    """
+    if tenant.auth == "basic":
+        qui = tenant.email or "(courriel absent)"
+        return f"{qui}  [{tenant.email_origine or 'origine inconnue'}]"
+    return (
+        f"compte porte par le jeton {tenant.auth} - "
+        f'jira_myself(tenant="{tenant.code}") dit lequel'
+    )
+
+
+def _apercu_ecriture(
+    tenant: Tenant,
+    verbe: str,
+    chemin: str,
+    corps: dict[str, Any],
+    geste: str,
+    notes: list[str] | None = None,
+) -> str:
+    """Le rendu d'un appel NON confirme. Rien n'est parti, et on montre quoi."""
+    lignes = [
+        "A CONFIRMER - RIEN N'A ETE ECRIT DANS JIRA.",
+        "",
+        f"Geste       : {geste}",
+        f"Instance    : {tenant.code} ({tenant.site})",
+        f"Appel       : {verbe} {API_ROOT}{chemin}",
+        f"Trace sous  : {_signataire(tenant)}",
+    ]
+    for note in notes or []:
+        lignes.append(f"ATTENTION   : {note}")
+    lignes += [
+        "",
+        "Corps EXACT qui serait envoye :",
+        json.dumps(corps, ensure_ascii=False, indent=2),
+        "",
+        "Pour l'executer : rappelle le meme outil, memes parametres, avec "
+        "confirmer=True.",
+        "Si le compte affiche ci-dessus n'est pas le tien et que ce geste doit "
+        "etre trace a ton nom, pose ton jeton nominatif dans la configuration "
+        "du plugin - il passe devant le compte d'equipe - puis relance la "
+        "session.",
+    ]
+    return "\n".join(lignes)
+
+
+# --- Resoudre, jamais deviner -------------------------------------------
+
+
+def _types_projet(tenant: Tenant, cle_projet: str) -> list[dict[str, Any]]:
+    """Les types de ticket reels d'un projet, tels que l'instance les declare."""
+    payload = _request(tenant, f"/project/{cle_projet}")
+    types = payload.get("issueTypes") or []
+    if not types:
+        raise JiraError(
+            f"[{tenant.code}] le projet {cle_projet} ne declare aucun type de "
+            "ticket exploitable. Verifie la cle du projet avec jira_projects."
+        )
+    return [t for t in types if isinstance(t, dict)]
+
+
+def _resolve_type_ticket(
+    tenant: Tenant, cle_projet: str, demande: str
+) -> dict[str, Any]:
+    """Un type de ticket -> sa fiche. Comparaison a l'identique, ou refus.
+
+    Aucun rapprochement approximatif : « Tache » quand le projet declare
+    « Task » cree un ticket du mauvais type, et Jira ne s'en plaint pas.
+    """
+    brut = (demande or "").strip()
+    if not brut:
+        raise JiraError(
+            "type_ticket est vide. jira_types_ticket(tenant, projet) donne "
+            "les types reels du projet - ils varient d'un projet a l'autre, "
+            "surtout sur un projet gere par l'equipe."
+        )
+    types = _types_projet(tenant, cle_projet)
+    for fiche in types:
+        if str(fiche.get("id")) == brut:
+            return fiche
+    vise = _norm(brut)
+    for fiche in types:
+        if _norm(fiche.get("name")) == vise:
+            return fiche
+    reels = ", ".join(
+        f"{t.get('name')} (id {t.get('id')})" for t in types
+    )
+    raise JiraError(
+        f"Type de ticket inconnu dans {cle_projet} : « {brut} ». Le "
+        f"connecteur ne prend PAS le plus proche - il refuse. Types reels de "
+        f"ce projet : {reels}."
+    )
+
+
+def _resolve_priorite(tenant: Tenant, demande: str) -> dict[str, Any]:
+    """Une priorite -> sa fiche, lue sur l'instance."""
+    brut = (demande or "").strip()
+    priorites = _request(tenant, "/priority")
+    fiches = [p for p in (priorites or []) if isinstance(p, dict)]
+    for fiche in fiches:
+        if str(fiche.get("id")) == brut or _norm(fiche.get("name")) == _norm(brut):
+            return fiche
+    reelles = ", ".join(f"{p.get('name')} (id {p.get('id')})" for p in fiches)
+    raise JiraError(
+        f"Priorite inconnue sur {tenant.code} : « {brut} ». Priorites de "
+        f"l'instance : {reelles}."
+    )
+
+
+def _resolve_compte(tenant: Tenant, valeur: str) -> tuple[str, str]:
+    """Une personne -> (accountId, libelle). « moi » est resolu par /myself.
+
+    Comme en lecture : un nom d'affichage est REFUSE, pas rapproche. Affecter
+    un ticket a la mauvaise personne, c'est une notification a quelqu'un qui
+    n'est pas concerne et un ticket qui dort.
+    """
+    brut = (valeur or "").strip()
+    if not brut:
+        return "", ""
+    if _norm(brut) in {"moi", "me", "currentuser", "mes", "moi meme"}:
+        moi = _request(tenant, "/myself")
+        compte = str(moi.get("accountId") or "")
+        if not compte:
+            raise JiraError(
+                f"[{tenant.code}] /myself ne rend pas d'accountId : "
+                "impossible de resoudre « moi »."
+            )
+        return compte, f"{moi.get('displayName') or 'moi'} (via /myself)"
+    if re.fullmatch(r"[0-9a-fA-F]{24}", brut) or re.match(
+        r"^[0-9a-z]+:[0-9a-f-]{8,}", brut
+    ):
+        return brut, "accountId fourni"
+    raise JiraError(
+        f"Personne non resolue : « {brut} ». Atlassian exige l'accountId, y "
+        "compris pour affecter un ticket - un nom d'affichage ou un courriel "
+        "ne suffit pas. Appelle jira_user_lookup avec ce nom, puis repasse "
+        "l'accountId ici. Pour soi-meme, passe simplement « moi »."
+    )
+
+
+def _transitions_dispo(tenant: Tenant, cle: str) -> list[dict[str, Any]]:
+    """Les transitions reellement disponibles pour CE ticket, maintenant.
+
+    « Pour ce ticket » et non « pour ce projet » : le workflow, les conditions
+    et les droits font qu'une transition existe sans etre franchissable ici et
+    maintenant. La liste est donc relue juste avant, jamais mise en cache.
+    """
+    payload = _request(tenant, f"/issue/{cle}/transitions")
+    return [t for t in (payload.get("transitions") or []) if isinstance(t, dict)]
+
+
+def _resolve_transition(
+    tenant: Tenant, cle: str, demande: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Une transition -> (fiche, liste complete). A l'identique, ou refus."""
+    brut = (demande or "").strip()
+    dispo = _transitions_dispo(tenant, cle)
+    if not dispo:
+        raise JiraError(
+            f"[{tenant.code}] {cle} n'offre aucune transition franchissable "
+            "pour ce compte. Soit le ticket est dans un statut terminal, soit "
+            "le compte n'a pas le droit de le faire avancer."
+        )
+    if not brut:
+        offre = " | ".join(
+            f"{t.get('name')} -> {_nested(t, 'to', 'name')} (id {t.get('id')})"
+            for t in dispo
+        )
+        raise JiraError(
+            f"transition est vide. Transitions franchissables sur {cle} "
+            f"maintenant : {offre}."
+        )
+    for fiche in dispo:
+        if str(fiche.get("id")) == brut:
+            return fiche, dispo
+    vise = _norm(brut)
+    for fiche in dispo:
+        if _norm(fiche.get("name")) == vise:
+            return fiche, dispo
+    # Un statut CIBLE plutot qu'un nom de transition : c'est la confusion la
+    # plus frequente, et elle se rattrape sans deviner - le statut cible est
+    # une donnee, pas une approximation.
+    cibles = [f for f in dispo if _norm(_nested(f, "to", "name")) == vise]
+    if len(cibles) == 1:
+        return cibles[0], dispo
+    offre = " | ".join(
+        f"{t.get('name')} -> {_nested(t, 'to', 'name')} (id {t.get('id')})"
+        for t in dispo
+    )
+    raise JiraError(
+        f"Transition inconnue sur {cle} : « {brut} ». Le connecteur ne prend "
+        f"pas la plus proche. Transitions franchissables maintenant : {offre}."
+    )
+
+
+# --- Les outils de resolution, exposes -----------------------------------
+
+
+@mcp.tool()
+@_guard
+def jira_types_ticket(tenant: str, projet: str) -> str:
+    """Les types de ticket REELS d'un projet, avec leur id.
+
+    A appeler avant jira_creer_ticket. Un type de ticket est un id resolu sur
+    l'instance, jamais un nom devine : les types varient d'un projet a
+    l'autre, et un projet gere par l'equipe (team-managed) a les siens.
+
+    Rend aussi la colonne `sous_tache` : une sous-tache exige un parent, et le
+    connecteur refuse de la creer sans lui.
+    """
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    cle_projet = _cle_projet(projet)
+    fiches = _types_projet(cible, cle_projet)
+    rows = [
+        {
+            "tenant": cible.code,
+            "projet": cle_projet,
+            "id": fiche.get("id"),
+            "nom": fiche.get("name"),
+            "sous_tache": "oui" if fiche.get("subtask") else "non",
+            "description": (fiche.get("description") or "")[:120],
+        }
+        for fiche in fiches
+    ]
+    return _render_table(
+        rows,
+        f"[{cible.code}] types de ticket du projet {cle_projet}",
+        [],
+        [f"{len(rows)} type(s)"],
+        "",
+    )
+
+
+@mcp.tool()
+@_guard
+def jira_transitions(tenant: str, cle: str) -> str:
+    """Les transitions franchissables pour CE ticket, maintenant.
+
+    A appeler avant jira_transition_ticket. « Pour ce ticket » et non « pour
+    ce projet » : le workflow, ses conditions et les droits du compte font
+    qu'une transition peut exister sans etre franchissable ici et maintenant.
+
+    En lecture seule : lister n'engage rien.
+    """
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    reference = _cle_ticket(cle)
+    issue = _request(cible, f"/issue/{reference}", {"fields": "summary,status"})
+    fields = issue.get("fields") or {}
+    dispo = _transitions_dispo(cible, reference)
+    rows = [
+        {
+            "tenant": cible.code,
+            "id": fiche.get("id"),
+            "transition": fiche.get("name"),
+            "vers_statut": _nested(fiche, "to", "name"),
+            "ecran": "oui" if fiche.get("hasScreen") else "non",
+        }
+        for fiche in dispo
+    ]
+    entete = (
+        f"[{cible.code}] {reference} - statut actuel : "
+        f"{_nested(fields, 'status', 'name') or '?'} | "
+        f"{_texte_champ(fields.get('summary'))[:80]}"
+    )
+    return _render_table(
+        rows,
+        entete,
+        [],
+        [
+            f"{len(rows)} transition(s) franchissable(s) maintenant",
+            "« ecran = oui » : Jira demande des champs supplementaires dans "
+            "l'interface. Le connecteur ne les remplit pas - si la transition "
+            "echoue pour cette raison, elle se fait dans Jira.",
+        ],
+        "",
+    )
+
+
+# --- Les quatre gestes ---------------------------------------------------
+
+
+@mcp.tool()
+@_guard
+def jira_creer_ticket(
+    tenant: str,
+    projet: str,
+    type_ticket: str,
+    titre: str,
+    description: str = "",
+    parent: str = "",
+    assigne: str = "",
+    priorite: str = "",
+    etiquettes: str = "",
+    champs_json: str = "{}",
+    confirmer: bool = False,
+) -> str:
+    """Cree un ticket. Sans confirmer=True, montre ce qui partirait et s'arrete.
+
+    `projet` est une CLE (SUPPLY, VUD), `type_ticket` un nom ou un id resolu
+    sur le projet - jira_types_ticket les donne. `assigne` est un accountId ou
+    « moi » ; un nom d'affichage est refuse, jira_user_lookup le resout.
+    `parent` est la cle du ticket parent : obligatoire pour une sous-tache,
+    accepte pour rattacher a un epic.
+
+    NON IDEMPOTENT : deux appels confirmes creent DEUX tickets. Le serveur ne
+    rejoue jamais cet appel, meme sur une coupure reseau - il le dit et laisse
+    verifier.
+    """
+    # 1. Tout ce qui se verifie sans reseau, d'abord.
+    cle_projet = _cle_projet(projet)
+    sujet = (titre or "").strip()
+    if not sujet:
+        raise JiraError("titre vide : un ticket sans titre n'a pas d'usage.")
+    if "\n" in sujet or "\r" in sujet:
+        raise JiraError(
+            "Un titre de ticket tient sur une ligne. Le detail va dans "
+            "description, qui accepte les retours a la ligne."
+        )
+    if len(sujet) > 255:
+        raise JiraError(
+            f"titre trop long : {len(sujet)} caracteres, Jira en accepte 255. "
+            "Resserre le titre et mets le detail dans description."
+        )
+    labels = _etiquettes(etiquettes)
+    extra = _champs_libres(champs_json)
+    cle_parent = _cle_ticket(parent) if (parent or "").strip() else ""
+
+    # 2. Le reseau : resoudre ce qui ne se devine pas.
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    fiche_type = _resolve_type_ticket(cible, cle_projet, type_ticket)
+    if fiche_type.get("subtask") and not cle_parent:
+        raise JiraError(
+            f"« {fiche_type.get('name')} » est un type SOUS-TACHE dans "
+            f"{cle_projet} : Jira exige un parent. Passe parent=\"CLE\" - la "
+            "cle du ticket auquel elle se rattache."
+        )
+    compte, libelle_compte = _resolve_compte(cible, assigne)
+    fiche_prio = _resolve_priorite(cible, priorite) if (priorite or "").strip() else {}
+
+    fields: dict[str, Any] = {
+        "project": {"key": cle_projet},
+        "issuetype": {"id": str(fiche_type.get("id"))},
+        "summary": sujet,
+    }
+    if (description or "").strip():
+        fields["description"] = _adf_depuis_texte(description, "la description")
+    if cle_parent:
+        fields["parent"] = {"key": cle_parent}
+    if compte:
+        fields["assignee"] = {"id": compte}
+    if fiche_prio:
+        fields["priority"] = {"id": str(fiche_prio.get("id"))}
+    if labels:
+        fields["labels"] = labels
+    fields.update(extra)
+    corps = {"fields": fields}
+
+    notes = [
+        "NON IDEMPOTENT : chaque appel confirme cree un ticket de plus. En "
+        "cas de doute apres une coupure, cherche le titre avec "
+        "jira_recherche AVANT de relancer.",
+        f"Type resolu : {fiche_type.get('name')} (id {fiche_type.get('id')}) "
+        f"dans {cle_projet}.",
+    ]
+    if compte:
+        notes.append(f"Affectation resolue : {libelle_compte}. Il sera notifie.")
+    if not confirmer:
+        return _apercu_ecriture(
+            cible,
+            "POST",
+            "/issue",
+            corps,
+            f"creer un ticket {fiche_type.get('name')} dans {cle_projet}",
+            notes,
+        )
+
+    cree = _request(cible, "/issue", None, "POST", corps)
+    nouvelle = str(cree.get("key") or "")
+    if not nouvelle:
+        return _render_json(
+            cree, f"[{cible.code}] ticket cree, mais sans cle dans la reponse"
+        )
+    lignes = [
+        f"TICKET CREE : {nouvelle}",
+        f"  instance   : {cible.code}",
+        f"  projet     : {cle_projet}",
+        f"  type       : {fiche_type.get('name')}",
+        f"  titre      : {sujet}",
+        f"  trace sous : {_signataire(cible)}",
+        f"  url        : {cible.browse(nouvelle)}",
+    ]
+    if compte:
+        lignes.append(f"  affecte a  : {libelle_compte}")
+    lignes += [
+        "",
+        "Verifie-le dans Jira : le connecteur a envoye le corps affiche, il "
+        "ne relit pas ce que les automatisations du projet ont pu changer "
+        "juste apres la creation.",
+    ]
+    return "\n".join(lignes)
+
+
+@mcp.tool()
+@_guard
+def jira_maj_ticket(
+    tenant: str,
+    cle: str,
+    titre: str = "",
+    description: str = "",
+    assigne: str = "",
+    priorite: str = "",
+    echeance: str = "",
+    etiquettes_ajout: str = "",
+    etiquettes_retrait: str = "",
+    champs_json: str = "{}",
+    confirmer: bool = False,
+) -> str:
+    """Met a jour les champs d'un ticket. Ne touche PAS son statut.
+
+    Un statut ne s'ecrit pas, il se franchit : jira_transition_ticket.
+
+    ECRASEMENT. Un champ pose ici REMPLACE la valeur existante - sur une
+    description, tout l'existant part. L'apercu affiche donc la taille de ce
+    qui serait ecrase avant de confirmer. Les etiquettes, elles, sont
+    incrementales : `etiquettes_ajout` et `etiquettes_retrait` n'affectent que
+    celles nommees, les autres restent.
+
+    `echeance` s'ecrit AAAA-MM-JJ. Une chaine vide laisse le champ tranquille ;
+    le mot « vider » l'efface.
+    """
+    # 1. Local d'abord.
+    reference = _cle_ticket(cle)
+    extra = _champs_libres(champs_json)
+    ajouts = _etiquettes(etiquettes_ajout, "etiquettes_ajout")
+    retraits = _etiquettes(etiquettes_retrait, "etiquettes_retrait")
+    doublon = sorted(set(ajouts) & set(retraits))
+    if doublon:
+        raise JiraError(
+            f"Ces etiquettes sont a la fois ajoutees et retirees : "
+            f"{', '.join(doublon)}. Tranche - Jira appliquerait les deux "
+            "gestes dans un ordre qui n'est pas garanti."
+        )
+    nouveau_titre = (titre or "").strip()
+    if nouveau_titre and ("\n" in nouveau_titre or "\r" in nouveau_titre):
+        raise JiraError("Un titre de ticket tient sur une ligne.")
+    if len(nouveau_titre) > 255:
+        raise JiraError(
+            f"titre trop long : {len(nouveau_titre)} caracteres, Jira en "
+            "accepte 255."
+        )
+    date_echeance = (echeance or "").strip()
+    vider_echeance = _norm(date_echeance) in {"vider", "vide", "aucune", "supprimer"}
+    if date_echeance and not vider_echeance:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_echeance):
+            raise JiraError(
+                f"echeance « {date_echeance} » n'est pas une date. Jira "
+                "attend AAAA-MM-JJ. Le connecteur n'interprete pas « la "
+                "semaine prochaine » sur une ECRITURE : une date fausse dans "
+                "un ticket devient une date fausse dans un mail."
+            )
+    demande_quelque_chose = any(
+        [
+            nouveau_titre,
+            (description or "").strip(),
+            (assigne or "").strip(),
+            (priorite or "").strip(),
+            date_echeance,
+            ajouts,
+            retraits,
+            extra,
+        ]
+    )
+    if not demande_quelque_chose:
+        raise JiraError(
+            "Aucune modification demandee : tous les parametres sont vides. "
+            "Rien n'a ete appele - un PUT vide serait un appel pour rien."
+        )
+
+    # 2. Le reseau : relire l'existant AVANT de proposer de l'ecraser.
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    actuel = _request(
+        cible,
+        f"/issue/{reference}",
+        {
+            "fields": (
+                "summary,description,labels,assignee,priority,duedate,status,"
+                "issuetype"
+            )
+        },
+    )
+    champs_actuels = actuel.get("fields") or {}
+    desc_actuelle = _adf_text(champs_actuels.get("description"))
+    labels_actuels = [str(x) for x in (champs_actuels.get("labels") or [])]
+
+    compte, libelle_compte = _resolve_compte(cible, assigne)
+    fiche_prio = _resolve_priorite(cible, priorite) if (priorite or "").strip() else {}
+
+    fields: dict[str, Any] = {}
+    update: dict[str, Any] = {}
+    change: list[str] = []
+    if nouveau_titre:
+        fields["summary"] = nouveau_titre
+        change.append(
+            f"titre : « {_texte_champ(champs_actuels.get('summary'))[:60]} » -> "
+            f"« {nouveau_titre[:60]} »"
+        )
+    if (description or "").strip():
+        fields["description"] = _adf_depuis_texte(description, "la description")
+        change.append(
+            f"description : ECRASEMENT de {len(desc_actuelle)} caractere(s) "
+            f"existant(s) par {len((description or '').strip())}"
+        )
+    if compte:
+        fields["assignee"] = {"id": compte}
+        change.append(
+            f"affectation : {_nested(champs_actuels, 'assignee', 'displayName') or 'personne'}"
+            f" -> {libelle_compte}"
+        )
+    if fiche_prio:
+        fields["priority"] = {"id": str(fiche_prio.get("id"))}
+        change.append(
+            f"priorite : {_nested(champs_actuels, 'priority', 'name') or '?'} -> "
+            f"{fiche_prio.get('name')}"
+        )
+    if vider_echeance:
+        fields["duedate"] = None
+        change.append(
+            f"echeance : {champs_actuels.get('duedate') or 'aucune'} -> effacee"
+        )
+    elif date_echeance:
+        fields["duedate"] = date_echeance
+        change.append(
+            f"echeance : {champs_actuels.get('duedate') or 'aucune'} -> {date_echeance}"
+        )
+    if ajouts or retraits:
+        gestes = [{"add": e} for e in ajouts] + [{"remove": e} for e in retraits]
+        update["labels"] = gestes
+        change.append(
+            f"etiquettes : {', '.join(labels_actuels) or 'aucune'} | "
+            f"ajout {ajouts or 'aucun'}, retrait {retraits or 'aucun'} "
+            "(les autres restent)"
+        )
+    for nom, valeur in extra.items():
+        fields[nom] = valeur
+        change.append(f"{nom} : pose a {json.dumps(valeur, ensure_ascii=False)}")
+
+    corps: dict[str, Any] = {}
+    if fields:
+        corps["fields"] = fields
+    if update:
+        corps["update"] = update
+
+    entete = (
+        f"{reference} - {_texte_champ(champs_actuels.get('summary'))[:70]} "
+        f"[{_nested(champs_actuels, 'status', 'name') or '?'}]"
+    )
+    notes = [f"Ticket vise : {entete}"] + [f"  {c}" for c in change]
+    if "description" in fields and desc_actuelle:
+        notes.append(
+            "La description actuelle sera PERDUE - Jira n'en garde que "
+            "l'historique. Relis-la avec jira_issue avant de confirmer si "
+            "elle porte du contenu."
+        )
+    if not confirmer:
+        return _apercu_ecriture(
+            cible,
+            "PUT",
+            f"/issue/{reference}",
+            corps,
+            f"mettre a jour {reference}",
+            notes,
+        )
+
+    _request(cible, f"/issue/{reference}", None, "PUT", corps)
+    lignes = [f"TICKET MIS A JOUR : {reference}"]
+    lignes += [f"  {c}" for c in change]
+    lignes += [
+        f"  trace sous : {_signataire(cible)}",
+        f"  url        : {cible.browse(reference)}",
+        "",
+        "Jira a repondu sans corps (204) : c'est sa reponse normale a une mise "
+        "a jour reussie. Relis le ticket avec jira_issue pour voir l'etat "
+        "final, automatisations comprises.",
+    ]
+    return "\n".join(lignes)
+
+
+@mcp.tool()
+@_guard
+def jira_commenter_ticket(
+    tenant: str, cle: str, texte: str, confirmer: bool = False
+) -> str:
+    """Ajoute un commentaire a un ticket. Le texte est converti en ADF.
+
+    NON IDEMPOTENT : deux appels confirmes posent DEUX commentaires. Le
+    serveur ne rejoue jamais cet appel.
+
+    Un commentaire est visible de tous ceux qui suivent le ticket, et part en
+    notification. C'est un message a des gens, pas une note privee.
+    """
+    reference = _cle_ticket(cle)
+    corps_adf = _adf_depuis_texte(texte, "le commentaire")
+    corps = {"body": corps_adf}
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    actuel = _request(cible, f"/issue/{reference}", {"fields": "summary,status"})
+    champs_actuels = actuel.get("fields") or {}
+    apercu = (texte or "").strip()
+    notes = [
+        f"Ticket vise : {reference} - "
+        f"{_texte_champ(champs_actuels.get('summary'))[:70]} "
+        f"[{_nested(champs_actuels, 'status', 'name') or '?'}]",
+        "NON IDEMPOTENT : chaque appel confirme pose un commentaire de plus.",
+        "Un commentaire part en notification aux personnes qui suivent le "
+        "ticket. Il ne se supprime pas par ce connecteur : un commentaire "
+        "faux se corrige par un commentaire qui rectifie.",
+        f"Texte tel qu'il sera lu ({len(apercu)} caracteres) : "
+        f"{apercu[:300]}{'...' if len(apercu) > 300 else ''}",
+    ]
+    if not confirmer:
+        return _apercu_ecriture(
+            cible,
+            "POST",
+            f"/issue/{reference}/comment",
+            corps,
+            f"commenter {reference}",
+            notes,
+        )
+
+    pose = _request(cible, f"/issue/{reference}/comment", None, "POST", corps)
+    return "\n".join(
+        [
+            f"COMMENTAIRE POSE sur {reference}",
+            f"  id         : {pose.get('id') or '?'}",
+            f"  auteur     : {_nested(pose, 'author', 'displayName') or '?'}",
+            f"  date       : {_short_date(pose.get('created'))}",
+            f"  trace sous : {_signataire(cible)}",
+            f"  url        : {cible.browse(reference)}",
+        ]
+    )
+
+
+@mcp.tool()
+@_guard
+def jira_transition_ticket(
+    tenant: str,
+    cle: str,
+    transition: str,
+    commentaire: str = "",
+    confirmer: bool = False,
+) -> str:
+    """Fait franchir une transition a un ticket - la SEULE facon de bouger un statut.
+
+    `transition` est un nom de transition, son id, ou le statut cible s'il ne
+    correspond qu'a une seule transition. Un libelle approchant est REFUSE
+    avec la liste des transitions franchissables : jira_transitions la donne.
+
+    LE GESTE LE PLUS ENGAGEANT DE CE CONNECTEUR. Un statut qui bouge est vu de
+    toute l'equipe, peut declencher des automatisations Jira et des
+    notifications, et vaut souvent avancement dans un point de suivi.
+    """
+    reference = _cle_ticket(cle)
+    corps_commentaire = (
+        _adf_depuis_texte(commentaire, "le commentaire")
+        if (commentaire or "").strip()
+        else None
+    )
+    cible = _tenants(tenant, exiger_unique=True)[0]
+    actuel = _request(cible, f"/issue/{reference}", {"fields": "summary,status"})
+    champs_actuels = actuel.get("fields") or {}
+    statut_actuel = _nested(champs_actuels, "status", "name") or "?"
+    fiche, dispo = _resolve_transition(cible, reference, transition)
+
+    corps: dict[str, Any] = {"transition": {"id": str(fiche.get("id"))}}
+    if corps_commentaire is not None:
+        corps["update"] = {"comment": [{"add": {"body": corps_commentaire}}]}
+
+    cible_statut = _nested(fiche, "to", "name") or "?"
+    notes = [
+        f"Ticket vise : {reference} - "
+        f"{_texte_champ(champs_actuels.get('summary'))[:70]}",
+        f"Statut      : {statut_actuel}  ->  {cible_statut}",
+        f"Transition  : {fiche.get('name')} (id {fiche.get('id')}), resolue "
+        "sur les transitions franchissables a l'instant.",
+        "Une transition peut declencher des automatisations et des "
+        "notifications cote Jira, et elle est visible de toute l'equipe.",
+    ]
+    if fiche.get("hasScreen"):
+        notes.append(
+            "Cette transition affiche un ECRAN dans Jira : elle peut exiger "
+            "des champs que le connecteur ne remplit pas. Si Jira la refuse "
+            "pour cette raison, fais-la dans l'interface."
+        )
+    if corps_commentaire is not None:
+        notes.append("Un commentaire sera pose dans le meme geste.")
+    if not confirmer:
+        notes.append(
+            "Autres transitions possibles : "
+            + " | ".join(
+                f"{t.get('name')} -> {_nested(t, 'to', 'name')}"
+                for t in dispo
+                if str(t.get("id")) != str(fiche.get("id"))
+            )
+        )
+        return _apercu_ecriture(
+            cible,
+            "POST",
+            f"/issue/{reference}/transitions",
+            corps,
+            f"faire passer {reference} de {statut_actuel} a {cible_statut}",
+            notes,
+        )
+
+    _request(cible, f"/issue/{reference}/transitions", None, "POST", corps)
+    relu = _request(cible, f"/issue/{reference}", {"fields": "status"})
+    statut_final = _nested(relu.get("fields") or {}, "status", "name") or "?"
+    lignes = [
+        f"TRANSITION FRANCHIE : {reference}",
+        f"  transition : {fiche.get('name')}",
+        f"  statut     : {statut_actuel} -> {statut_final}",
+        f"  trace sous : {_signataire(cible)}",
+        f"  url        : {cible.browse(reference)}",
+    ]
+    if _norm(statut_final) != _norm(cible_statut):
+        lignes += [
+            "",
+            f"ATTENTION : le statut final ({statut_final}) n'est pas celui "
+            f"annonce par la transition ({cible_statut}). Ce n'est pas une "
+            "erreur du connecteur - une automatisation du projet a "
+            "probablement enchaine. Regarde jira_changelog.",
+        ]
+    return "\n".join(lignes)
+
+
 # --- Export et echappatoire ---------------------------------------------
 
 
@@ -4394,8 +5744,9 @@ def jira_export_sql(sql: str, filename: str = "", max_rows: int = 500000) -> str
 # --------------------------------------------------------------------------
 
 HELP = """\
-MCP jira - interrogation en lecture seule des deux instances Atlassian de
-Vente-unique : vuproject (metier) et webfacto (developpement).
+MCP jira - interrogation des deux instances Atlassian de Vente-unique -
+vuproject (metier) et webfacto (developpement) - et ecriture bornee a quatre
+gestes, jamais sans confirmer=True.
 
   python server.py            mode serveur MCP (stdio), lance par Claude Code
   python server.py doctor     diagnostic de configuration et de connexion
@@ -4403,8 +5754,9 @@ Vente-unique : vuproject (metier) et webfacto (developpement).
 
 Configuration, en deux couches :
   - l'equipe : 08_ENGINE/04_mcp/00_config/jira.shared.env, sur le drive
-    partage. Tenants, sites, plafonds. AUCUN identifiant : un jeton Jira est
-    nominatif.
+    partage. Tenants, sites, plafonds, ET le couple courriel + jeton du compte
+    de SERVICE (decision du 2026-09-01). Restent refuses : les deux secrets
+    oauth, qui n'ont qu'un detenteur possible.
   - le poste : jira.env hors du vault, par defaut ~/.jira-mcp/jira.env.
     Modele : jira.env.example.
 Priorite : configuration du plugin > jira.env du poste > fichier d'equipe >

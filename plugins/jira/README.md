@@ -1,9 +1,9 @@
 ---
-updated: 2026-09-01
+updated: 2026-09-02
 updated_by: Guillaume_Champin
 ---
 
-# Connecteur JIRA — deux instances, en lecture seule
+# Connecteur JIRA — deux instances, lecture large et écriture bornée
 
 Interroge en langage naturel les **deux instances Atlassian** de Vente-unique :
 
@@ -17,9 +17,14 @@ Deux exports : **`/jira-projet-export`** et **`/jira-wf-export`** (plus
 `/jira-export`, générique, qui demande l'instance). Et **`/jira-setup`** pour la
 mise en service.
 
-**27 outils, tous en lecture.** Créer un ticket, commenter, changer un statut ou
-affecter quelqu'un ne se font pas ici : un statut qui bouge dans JIRA engage
-l'équipe, ça reste un geste humain dans l'interface.
+**33 outils. 29 lisent, 4 écrivent.** Le connecteur a été en lecture seule
+jusqu'au 2026-09-02 ; il écrit depuis, et le principe n'a pas bougé : aucun
+appel ne part vers un chemin qui n'est pas nommé dans un fichier versionné à
+côté du serveur. Ce qui a changé, c'est qu'il y a désormais **deux** listes
+blanches — `rest_get_paths.json` pour la lecture, `rest_write_paths.json` pour
+l'écriture, où **la clé porte le verbe**. Voir « Écrire » plus bas : un statut
+qui bouge reste un geste humain, mais un geste humain **vérifiable** plutôt
+qu'un geste refait à la main dans l'interface.
 
 ## Ce qui fait la différence : le contexte est embarqué
 
@@ -68,6 +73,79 @@ filtre : refusés, avec la marche à suivre. La raison est simple — un filtre
 ignoré ne rend pas moins de lignes, il rend **toute la base** avec l'air d'avoir
 compris.
 
+## Écrire : quatre gestes, trois garde-fous
+
+Quatre gestes, et quatre seulement : **créer** un ticket, **mettre à jour** ses
+champs, **commenter**, **franchir une transition**. Ce sont les quatre entrées de
+`rest_write_paths.json`, chacune avec son verbe et son pourquoi ; les gestes
+volontairement absents y sont listés aussi, avec la raison de leur absence.
+
+**Aucun DELETE n'est exposé**, ni sur un ticket ni sur un commentaire, et ce
+n'est pas un oubli : un ticket qui n'a pas lieu d'être se ferme par une
+transition, ce qui garde la trace. Un commentaire faux se corrige par un
+commentaire qui rectifie, pas par un effacement silencieux.
+
+La clé de la liste blanche porte **le verbe**, et c'est ce qui fait tout :
+`PUT /issue/{clé}` met à jour, `DELETE /issue/{clé}` détruit — le même chemin,
+deux gestes sans rapport. Autoriser un chemin sans son verbe, ce serait
+autoriser la suppression en croyant autoriser la mise à jour.
+
+### Les trois garde-fous
+
+1. **Rien ne part sans `confirmer=True`.** Un appel sans confirmation ne touche
+   pas JIRA : il affiche le **corps exact** qui serait envoyé, l'instance visée
+   et **le compte sous lequel l'action sera tracée**, puis s'arrête. C'est la
+   règle « l'envoi est un geste humain » du cerveau d'équipe, rendue
+   vérifiable — on ne demande pas de croire un résumé.
+2. **Aucune écriture n'est rejouée.** Le serveur rejoue un GET sur une coupure
+   réseau, un 429 ou un 5xx ; il ne rejoue **jamais** un POST, pas même sur un
+   429 où ce serait pourtant sans risque. La règle n'a pas d'exception parce
+   qu'une règle sans exception se tient. Un `POST /issue` rejoué après un délai
+   d'attente, c'est un doublon dans le référentiel, et le serveur ne peut pas
+   savoir si le premier appel a abouti : il le dit, et laisse vérifier.
+3. **Rien n'est deviné.** Le type de ticket, la priorité, la transition et la
+   personne sont relus sur l'instance et comparés **à l'identique**. Un libellé
+   approchant est **refusé** avec la liste des valeurs réelles — jamais remplacé
+   par le plus proche. « Tâche » quand le projet déclare « Task » crée un ticket
+   du mauvais type, et JIRA ne s'en plaint pas. Une transition est résolue sur
+   celles réellement franchissables pour **ce** ticket, relues juste avant.
+
+### Ce que le connecteur refuse avant même d'appeler
+
+Une clé mal formée, un titre vide ou sur deux lignes, un titre de plus de 255
+caractères, un projet désigné par un nom au lieu de sa clé, une étiquette avec
+un espace, une échéance en langage naturel, un statut posé comme un champ, une
+mise à jour qui ne change rien, une étiquette à la fois ajoutée et retirée. Tous
+refusés **sans un seul appel réseau** — un refus qui ne coûte rien est un refus
+qu'on peut se permettre de rendre strict.
+
+Deux cas méritent leur explication :
+
+- **une échéance ne s'écrit qu'en `AAAA-MM-JJ`.** En lecture, le connecteur
+  traduit « la semaine prochaine » ; en écriture, il refuse. C'est la règle « on
+  n'invente jamais une date » du cerveau d'équipe : une date fausse dans un
+  ticket devient une date fausse dans un mail à un transporteur.
+- **un statut ne se pose pas comme un champ**, il se franchit. C'est aussi la
+  seule façon dont JIRA l'accepte, mais l'erreur est fréquente et le message le
+  dit plutôt que de laisser JIRA rendre un 400 opaque.
+
+### Qui signe l'écriture
+
+Avec les identifiants d'équipe, c'est le **compte de service** qui apparaît dans
+l'historique du ticket, pas la personne. Acceptable pour lire, discutable pour
+écrire : chaque aperçu affiche donc le compte tracé et son origine avant de
+confirmer, et rappelle qu'un **jeton nominatif posé sur le poste passe devant
+celui de l'équipe**. On ne retire pas la ligne partagée, on la surcharge chez
+soi.
+
+### La mise à jour écrase
+
+Un champ posé dans `fields` **remplace** la valeur existante — sur une
+description, tout l'existant part, et JIRA n'en garde que l'historique.
+L'aperçu chiffre donc ce qui serait écrasé (« ECRASEMENT de 1 240 caractère(s)
+existant(s) ») avant de confirmer. Les étiquettes, elles, sont **incrémentales** :
+`etiquettes_ajout` et `etiquettes_retrait` ne touchent que celles nommées.
+
 ## Compter n'est pas lister
 
 **L'API de recherche moderne de Jira Cloud ne rend aucun total.** Atlassian a
@@ -113,8 +191,9 @@ Atlassian** sur le domaine de l'entreprise. Ce n'est pas un geste individuel :
 **il passe par un cadrage Webfacto**. Tant que ce n'est pas fait, `basic` est le
 bon choix.
 
-C'est aussi la seule requête non-GET du serveur, et elle va au service
-d'authentification, pas à l'API Jira : la règle de lecture seule reste entière.
+Cette requête-là n'a rien à voir avec les quatre gestes d'écriture : elle va au
+service d'authentification, pas à l'API Jira, et ne touche aucune donnée. Elle
+n'est donc soumise à aucune confirmation — elle ne change rien chez personne.
 
 ## La configuration, en deux couches
 
@@ -166,7 +245,7 @@ mode OAuth se configure sur **un** poste.
 
 Le serveur les ignore et le **signale** dans `/jira-setup`, avec cette raison.
 
-## Les 27 outils
+## Les 33 outils
 
 **Mise en service et diagnostic** — `jira_setup_status`, `jira_save_key`,
 `jira_forget_key`, `jira_doctor`, `jira_tenants`.
@@ -180,6 +259,13 @@ Le serveur les ignore et le **signale** dans `/jira-setup`, avec cette raison.
 (détail, description en texte lisible), `jira_comments`, `jira_changelog`
 (depuis quand dans ce statut), `jira_children` (ce que porte un épic),
 `jira_get` (échappatoire, liste blanche de chemins GET).
+
+**Résoudre avant d'écrire, en lecture** — `jira_types_ticket` (les types réels
+d'un projet, avec leur id), `jira_transitions` (les transitions franchissables
+pour ce ticket, maintenant).
+
+**Écrire, sous `confirmer=True`** — `jira_creer_ticket`, `jira_maj_ticket`,
+`jira_commenter_ticket`, `jira_transition_ticket`.
 
 **Exporter et historiser** — `jira_export_csv`, `jira_sync`, `jira_tables`,
 `jira_columns`, `jira_sql`, `jira_export_sql`.
@@ -211,13 +297,21 @@ Ensuite **`/jira-setup`**, qui vérifie et guide pas à pas.
 python server/test_offline.py
 ```
 
-**114 contrôles hors ligne, aucun appel réseau.** Ils couvrent la traduction
+**188 contrôles hors ligne, aucun appel réseau.** Ils couvrent la traduction
 français → JQL, **les refus** (une période incompréhensible, un nom au lieu d'un
-accountId, une recherche sans filtre, un ordre qui n'est pas un tri), la liste
-blanche des chemins GET, le rendu de l'ADF, le refus des identifiants dans le
-fichier d'équipe, la lecture d'un `.env` avec BOM, et la signature des outils MCP
-— le bug `functools.wraps` qui publie des outils inappelables sans erreur au
-démarrage.
+accountId, une recherche sans filtre, un ordre qui n'est pas un tri), les **deux**
+listes blanches, le rendu de l'ADF **et sa construction**, le refus des secrets
+OAuth dans le fichier d'équipe, la lecture d'un `.env` avec BOM, et la signature
+des outils MCP — le bug `functools.wraps` qui publie des outils inappelables sans
+erreur au démarrage.
+
+**Sur l'écriture, deux contrôles portent plus que les autres.** Le premier vérifie
+que `DELETE /issue/{clé}` est refusé alors que `PUT` sur le **même chemin** passe :
+un contrôle qui ne regarderait que le chemin laisserait passer la suppression. Le
+second remplace `_request` par un mouchard qui **lève** si un verbe autre que GET
+est émis, puis rejoue les quatre gestes sans confirmation : il échoue donc le jour
+où un outil écrirait sans `confirmer=True`, ce qu'aucune assertion sur le texte
+rendu ne verrait.
 
 ```bash
 python server/server.py doctor
@@ -233,10 +327,22 @@ appelée, et un vrai appel `GET /myself` plus une recherche, **par instance**.
   connaît que le site. `jira_projects(tenant="WF")` le découvre, et ce qui sera
   trouvé a vocation à monter dans `01_CONTEXTE/JIRA_ET_CHANTIERS.md` — une case à
   cocher y attend déjà.
-- **Le connecteur n'a pas encore été confronté à un jeton valide.** Les 114
-  contrôles hors ligne passent, le serveur démarre, publie ses 27 outils et rend
+- **Le connecteur n'a pas encore été confronté à un jeton valide.** Les 188
+  contrôles hors ligne passent, le serveur démarre, publie ses 33 outils et rend
   ses erreurs proprement. Les premiers résultats réels sont à regarder comme une
   recette, pas comme une mesure établie.
+- **Aucune écriture n'a jamais atteint une vraie instance.** Les quatre gestes
+  sont éprouvés hors ligne, aperçu compris, contre une API simulée. La première
+  écriture réelle se fait donc **sur un ticket d'essai**, dans un projet où un
+  ticket de trop ne dérange personne — et en regardant l'aperçu, pas en
+  confirmant d'emblée. Le compte de service doit par ailleurs être provisionné
+  **en lecture** tant que l'écriture n'est pas arbitrée : un 403 propre vaut
+  mieux qu'un ticket créé sous le nom du compte d'équipe.
+- **L'ouverture de l'écriture n'est pas encore arbitrée en équipe.** Le
+  `CLAUDE.md` collectif et `08_ENGINE/README.md` écrivent encore que les
+  connecteurs de l'équipe sont « en lecture seule par construction, pas par
+  convention ». Ce connecteur est le premier à en sortir : c'est un point à
+  trancher à quatre, pas une décision à prendre dans un README de plugin.
 - **Le mode `oauth` est écrit et non éprouvé** : il attend une application
   inscrite côté Atlassian, donc le jalon Webfacto.
 
