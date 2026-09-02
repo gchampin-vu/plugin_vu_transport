@@ -20,32 +20,49 @@ chargement Power BI, ou un rapprochement avec le paramétrage de l'ERP.
 
 Reformule en une phrase ce que tu as compris, puis résous :
 
-- **les pays** : codes (`FR,DE,IT`), noms français (`France, Allemagne`), `UE`
-  pour les 27, `VU` pour le périmètre d'équipe. `GR` est traduit en `EL` —
-  **la Grèce porte le code EL dans les nomenclatures TVA, pas GR.**
+- **les pays** : codes (`FR,DE,IT`), noms français (`France, Allemagne, Suisse`),
+  `UE` pour **les 27 seulement**, `Europe` ou `tous` pour **les 45
+  juridictions**, `VU` pour le périmètre d'équipe. `GR` est traduit en `EL` —
+  **la Grèce porte le code EL dans les nomenclatures TVA, pas GR** — et
+  `Belfast` en `XI`, qui n'est pas `GB`.
+
+  Si la demande dit « en Europe », tranche : *dans l'Union* ou *sur le
+  continent* ? Les deux exports sont justes, ils n'ont pas le même contenu.
 - **la forme du fichier**, et c'est le vrai choix de cette commande :
 
 | Ce que la personne veut faire | `forme` |
 |---|---|
 | Une ligne par pays, les taux en colonnes — le tableau de comparaison classique | `pays` |
-| Croiser un taux avec une famille de produits, charger dans Power BI | `categories` — une ligne par pays × catégorie × taux |
+| Croiser un taux avec une famille de produits, charger dans Power BI | `categories` — une ligne par pays × catégorie × taux, **avec les codes de nomenclature douanière** |
 
 En cas de doute, `pays`. Passe à `categories` dès que la question parle de
 **produits, de familles, de transport de personnes, de livraison ou de
-restauration** : c'est là que la colonne `rate_categories` répond, et le tableau
-par pays ne l'a pas.
+restauration** : c'est là que répondent les 87 catégories et la colonne
+`codes_cn`, et le tableau par pays ne les a pas.
+
+Rappel : les catégories et les codes CN **n'existent que pour les 27 et XI**.
+Une ligne suisse ressortira avec sa catégorie vide — ce n'est pas que la Suisse
+n'a pas de taux réduit, c'est que la source qui la couvre ne les qualifie pas.
 
 **2. Vérifie ce qui ne pourra pas entrer dans le fichier — avant d'exporter.**
 
-La source ne couvre **que les 27 États membres**. Si le périmètre demandé
-contient la **Suisse**, la **Norvège**, le **Royaume-Uni**, ou un territoire à
-régime particulier (**Canaries, DOM, Madère, Açores, Corse**), dis-le
-**maintenant**, pas après. `tva_pays` donne la liste et dit où chercher la
-réponse ailleurs.
+Deux choses à annoncer **avant** d'écrire le fichier, pas après.
 
-Un fichier « des taux de TVA de nos pays » où la Suisse manque sans que
-personne ne l'ait remarqué n'est pas un fichier incomplet : c'est un fichier
-faux.
+**Les territoires à régime particulier** — **Canaries, Ceuta-Melilla, Madère,
+Açores, Corse, DOM, Åland, Büsingen, Livigno, Mont Athos** — ne sont couverts
+par **aucune** des deux sources. S'ils sont dans la demande, dis-le maintenant.
+`tva_pays` donne la liste et la conséquence de chacun.
+
+**La provenance des lignes hors Union.** Si le périmètre contient la Suisse, le
+Royaume-Uni, la Norvège ou une autre juridiction hors Union, le fichier
+contiendra leurs taux — mais **tenus à la main**, pas issus de la base
+officielle. La colonne `provenance` le porte sur chaque ligne. **Dis-le en
+remettant le fichier** : un CSV circule, se recopie, et perd les
+avertissements qui n'étaient que dans la conversation.
+
+Un fichier « des taux de TVA de nos pays » où un taux suisse tenu à la main est
+présenté au même rang qu'un taux français officiel n'est pas un fichier
+incomplet : c'est un fichier trompeur.
 
 **3. Exporte.**
 
@@ -69,6 +86,9 @@ avant** : le cache local répond par défaut, et il peut avoir jusqu'à 24 h.
 - **Tu n'écris jamais dans la bibliothèque d'équipe.** L'export va dans le
   dossier local du connecteur. Un CSV posé dans un dossier synchronisé part chez
   tout le monde, et la base de connaissance ne porte pas de données.
-- **Tu ne complètes pas un pays manquant de mémoire.** Si la Suisse n'est pas
-  dans la source, elle n'est pas dans le fichier — on ne bouche pas un trou avec
-  un taux dont on ne sait pas d'où il vient.
+- **Tu ne complètes pas une juridiction manquante de mémoire.** Si elle n'est
+  pas dans le relevé, elle n'est pas dans le fichier — on ne bouche pas un trou
+  avec un taux dont on ne sait pas d'où il vient.
+- **Tu ne retires pas la colonne `provenance` du fichier**, même si on te
+  demande « un tableau simple ». C'est la colonne qui empêche de citer un taux
+  tenu à la main comme un taux officiel.

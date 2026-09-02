@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "taux-tva",
   "displayName": "Taux de TVA UE (lecture seule)",
-  "version": "1.0.0",
-  "description": "Les taux de TVA des 27 Etats membres de l'Union, en lecture seule, depuis la source publique api.vatcomply.com : taux normal, taux reduits, super-reduit, taux parking, devise, et les categories de biens auxquelles chaque taux reduit s'applique. Remplace le script Power Query qui n'en gardait que trois colonnes. Referentiel embarque des noms maison et des codes - la Grece est EL, pas GR - et surtout de ce qui n'est PAS couvert : Suisse, Norvege, Royaume-Uni, Canaries, DOM, Madere. Un cache local date rend le connecteur utilisable hors ligne et permet de dire si un taux a bouge. Chaque rendu porte la date du releve. Export CSV sur demande explicite. 8 outils et une competence.",
+  "version": "2.0.0",
+  "description": "Les taux de TVA de 45 juridictions europeennes, en lecture seule, depuis DEUX sources publiques qui n'ont pas la meme autorite : TEDB, la base officielle de la Commission europeenne (SOAP), pour les 27 Etats membres et XI (Irlande du Nord) ; et un jeu de donnees sous licence MIT, tenu a la main, pour les 17 juridictions hors Union - dont la Suisse, la Norvege et le Royaume-Uni - ainsi que pour les devises, que TEDB ne rend pas. La colonne `provenance` porte cette difference sur CHAQUE ligne : un taux suisse ne se cite pas avec l'assurance d'un taux francais. Ce que TEDB apporte et qu'aucun agregateur ne donnait : les 87 categories de biens et services, les CODES DE NOMENCLATURE DOUANIERE (CN) qui relient une categorie a un produit reel du catalogue, les commentaires officiels des Etats membres, les exemptions distinguees du taux zero, et la date d'effet de chaque taux. Referentiel embarque : la Grece est EL et non GR, « UE » designe les 27 et non tout le perimetre, XI est distincte de GB, et les territoires qu'AUCUNE source ne couvre (Canaries, Ceuta-Melilla, Madere, Acores, Corse, DOM, Aland, Busingen, Livigno, Mont Athos) sont nommes au lieu de laisser citer un taux national qui ne s'y applique pas. Cache local date, reponse hors ligne annoncee comme telle, comparaison avec le releve precedent. Aucune cle a saisir, aucune dependance nouvelle - le SOAP est parle sans zeep ni lxml. Export CSV sur demande explicite, commande /tva-export. 8 outils et une competence, annotes readOnlyHint.",
   "author": {
     "name": "Equipe Logistique & Transport, Vente-unique.com"
   },
@@ -13,6 +13,8 @@
     "vat",
     "fiscalite",
     "union-europeenne",
+    "tedb",
+    "nomenclature-cn",
     "facturation",
     "lecture-seule"
   ],
@@ -20,13 +22,13 @@
     "pays_vu": {
       "type": "string",
       "title": "Pays interroges par defaut (optionnel)",
-      "description": "Liste separee par des virgules - FR,BE,NL,DE. C'est ce que rend une question qui ne nomme aucun pays, et ce que designe « VU ». Reglage d'EQUIPE par nature : sa place est 08_ENGINE/04_mcp/00_config/tva.shared.env. Ne le renseigne ici que pour travailler sur un sous-ensemble depuis ce poste. Vide partout = les 27 Etats membres.",
+      "description": "Liste separee par des virgules - FR,BE,NL,DE,CH. C'est ce que rend une question qui ne nomme aucun pays, et ce que designe « VU ». Reglage d'EQUIPE par nature : sa place est 08_ENGINE/04_mcp/00_config/tva.shared.env. Ne le renseigne ici que pour travailler sur un sous-ensemble depuis ce poste. Vide partout = les 45 juridictions couvertes. Attention : « UE » ne designe que les 27 Etats membres.",
       "required": false
     },
     "ttl_hours": {
       "type": "string",
       "title": "Fraicheur du cache local, en heures (optionnel)",
-      "description": "Duree pendant laquelle le releve en cache repond sans rappeler la source. Defaut : 24. Un taux de TVA change par une loi de finances, pas dans la journee. L'outil tva_rafraichir force le rappel quand la question porte sur l'instant.",
+      "description": "Duree pendant laquelle le releve en cache repond sans rappeler les sources. Defaut : 24. Un taux de TVA change par une loi de finances, pas dans la journee. L'outil tva_rafraichir force le rappel quand la question porte sur l'instant.",
       "required": false
     },
     "timeout_s": {
@@ -37,8 +39,8 @@
     },
     "base_url": {
       "type": "string",
-      "title": "Racine de l'API (optionnel)",
-      "description": "Laisse vide : le defaut est https://api.vatcomply.com. Ce champ ne sert qu'a pointer un miroir ou un bouchon de test. Il n'y a aucune cle d'API a saisir pour ce connecteur - la source est publique et anonyme.",
+      "title": "Endpoint SOAP de TEDB (optionnel)",
+      "description": "Laisse vide : le defaut est https://ec.europa.eu/taxation_customs/tedb/ws/. Ce champ ne sert qu'a pointer un miroir ou un bouchon de test, et le slash final se garde - c'est l'adresse a laquelle on POSTe. Il n'y a aucune cle d'API a saisir pour ce connecteur : les deux sources sont publiques et anonymes.",
       "required": false
     },
     "export_dir": {
@@ -51,6 +53,12 @@
       "type": "string",
       "title": "Chemin du fichier de configuration d'equipe (optionnel)",
       "description": "A ne renseigner que si tva_doctor affiche « Config d'equipe : aucune » ET que l'equipe a depose un tva.shared.env. Le connecteur cherche tout seul 08_ENGINE/04_mcp/00_config/tva.shared.env sous ton profil ; il ne le trouve pas si la bibliotheque SharePoint « Transport BtoC » n'est pas synchronisee au meme endroit que chez les autres. Sans ce fichier le connecteur fonctionne quand meme : il n'a ni cle ni racine a en recevoir.",
+      "required": false
+    },
+    "vatnode_url": {
+      "type": "string",
+      "title": "Jeu de donnees hors Union et devises (optionnel)",
+      "description": "Laisse vide, sauf miroir d'equipe. Vide, le connecteur essaie le CDN puis le depot brut GitHub, ce qui lui donne un repli ; renseigner ce champ SUPPRIME ce repli. C'est la source des taux suisse, britannique et norvegien, et de toutes les devises - TEDB n'en rend aucune.",
       "required": false
     }
   }

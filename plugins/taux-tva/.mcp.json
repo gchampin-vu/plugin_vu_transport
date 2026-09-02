@@ -8,6 +8,7 @@
         "TVA_TTL_HOURS": "${user_config.ttl_hours}",
         "TVA_TIMEOUT_S": "${user_config.timeout_s}",
         "TVA_BASE_URL": "${user_config.base_url}",
+        "TVA_VATNODE_URL": "${user_config.vatnode_url}",
         "TVA_EXPORT_DIR": "${user_config.export_dir}",
         "TVA_SHARED_ENV": "${user_config.shared_env}"
       }

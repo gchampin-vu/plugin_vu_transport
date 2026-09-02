@@ -1,8 +1,23 @@
 {
-  "source": "https://api.vatcomply.com/vat_rates",
-  "releve": "2026-09-01",
-  "commentaire": "Referentiel LOCAL du connecteur. Il ne porte AUCUN taux : les taux viennent de l'API, jamais d'ici. Il porte ce que l'API ne dit pas - la traduction des noms maison en codes, et surtout ce qui n'est PAS couvert.",
-
+  "sources": {
+    "TEDB": {
+      "nom": "Taxes in Europe Database, Commission europeenne",
+      "endpoint": "https://ec.europa.eu/taxation_customs/tedb/ws/",
+      "couvre": "les 27 Etats membres et XI (Irlande du Nord)",
+      "provenance": "officielle - alimentee par les Etats membres eux-memes",
+      "rend": "taux normal, reduits, super-reduit, parking, exemptions, categories de biens, codes de nomenclature douaniere (CN), commentaires officiels, date d'effet"
+    },
+    "vatnode": {
+      "nom": "vatnode/eu-vat-rates-data",
+      "url": "https://cdn.jsdelivr.net/gh/vatnode/eu-vat-rates-data@main/data/eu-vat-rates-data.json",
+      "licence": "MIT",
+      "couvre": "17 juridictions hors Union, et LA DEVISE de tout le monde",
+      "provenance": "tenue a la main a partir de sources nationales - ce n'est pas un flux officiel",
+      "rend": "taux normal, reduits, super-reduit, parking, devise. Ni categorie, ni code CN, ni commentaire, ni date d'effet"
+    }
+  },
+  "releve": "2026-09-02",
+  "commentaire": "Referentiel LOCAL du connecteur. Il ne porte AUCUN taux : les taux viennent des deux sources, jamais d'ici. Il porte ce que les sources ne disent pas - la traduction des noms maison en codes, la provenance de chaque juridiction, l'administration ou verifier, et les territoires qu'AUCUNE des deux ne couvre.",
   "codes": {
     "AT": "Autriche",
     "BE": "Belgique",
@@ -30,9 +45,55 @@
     "RO": "Roumanie",
     "SE": "Suede",
     "SI": "Slovenie",
-    "SK": "Slovaquie"
+    "SK": "Slovaquie",
+    "XI": "Irlande du Nord",
+    "AD": "Andorre",
+    "AL": "Albanie",
+    "BA": "Bosnie-Herzegovine",
+    "CH": "Suisse",
+    "GB": "Royaume-Uni",
+    "GE": "Georgie",
+    "IS": "Islande",
+    "LI": "Liechtenstein",
+    "MC": "Monaco",
+    "MD": "Moldavie",
+    "ME": "Montenegro",
+    "MK": "Macedoine du Nord",
+    "NO": "Norvege",
+    "RS": "Serbie",
+    "TR": "Turquie",
+    "UA": "Ukraine",
+    "XK": "Kosovo"
   },
-
+  "etats_membres": [
+    "AT",
+    "BE",
+    "BG",
+    "CY",
+    "CZ",
+    "DE",
+    "DK",
+    "EE",
+    "EL",
+    "ES",
+    "FI",
+    "FR",
+    "HR",
+    "HU",
+    "IE",
+    "IT",
+    "LT",
+    "LU",
+    "LV",
+    "MT",
+    "NL",
+    "PL",
+    "PT",
+    "RO",
+    "SE",
+    "SI",
+    "SK"
+  ],
   "alias": {
     "GR": "EL",
     "GRECE": "EL",
@@ -53,6 +114,7 @@
     "ITALIE": "IT",
     "LETTONIE": "LV",
     "LITUANIE": "LT",
+    "LUXEMBOURG": "LU",
     "MALTE": "MT",
     "PAYS_BAS": "NL",
     "HOLLANDE": "NL",
@@ -64,57 +126,147 @@
     "SUEDE": "SE",
     "TCHEQUIE": "CZ",
     "REPUBLIQUE_TCHEQUE": "CZ",
-    "UE": "*",
-    "EU": "*",
+    "ANDORRE": "AD",
+    "ALBANIE": "AL",
+    "BOSNIE": "BA",
+    "BOSNIE_HERZEGOVINE": "BA",
+    "SUISSE": "CH",
+    "HELVETIE": "CH",
+    "ROYAUME_UNI": "GB",
+    "ROYAUME-UNI": "GB",
+    "UK": "GB",
+    "ANGLETERRE": "GB",
+    "GRANDE_BRETAGNE": "GB",
+    "GEORGIE": "GE",
+    "ISLANDE": "IS",
+    "LIECHTENSTEIN": "LI",
+    "MONACO": "MC",
+    "MOLDAVIE": "MD",
+    "MOLDOVA": "MD",
+    "MONTENEGRO": "ME",
+    "MACEDOINE": "MK",
+    "MACEDOINE_DU_NORD": "MK",
+    "NORVEGE": "NO",
+    "SERBIE": "RS",
+    "TURQUIE": "TR",
+    "UKRAINE": "UA",
+    "KOSOVO": "XK",
+    "IRLANDE_DU_NORD": "XI",
+    "ULSTER": "XI",
+    "UE": "@UE",
+    "EU": "@UE",
+    "UNION_EUROPEENNE": "@UE",
+    "ETATS_MEMBRES": "@UE",
+    "EUROPE": "*",
     "TOUS": "*",
+    "TOUT": "*",
     "VU": "@VU",
     "PERIMETRE_VU": "@VU",
-    "VENTE_UNIQUE": "@VU"
+    "VENTE_UNIQUE": "@VU",
+    "BELFAST": "XI",
+    "NORTHERN_IRELAND": "XI",
+    "ECOSSE": "GB",
+    "GALLES": "GB"
   },
-
-  "hors_perimetre": {
+  "administrations": {
+    "XI": {
+      "nom": "Irlande du Nord",
+      "regime": "Regime particulier issu du protocole nord-irlandais : dans le champ TVA de l'Union pour les biens, sous le code XI. TEDB la sert comme une juridiction a part entiere.",
+      "administration": "HMRC, et le protocole sur l'Irlande / Irlande du Nord",
+      "attention": "Une livraison a Belfast ne se traite pas comme une livraison en Grande-Bretagne. XI et GB sont deux lignes distinctes, et c'est voulu."
+    },
     "CH": {
       "nom": "Suisse",
-      "raison": "Hors Union europeenne. La source ne couvre que les 27 Etats membres : elle ne rend AUCUNE ligne pour la Suisse, et il n'y a rien a en deduire.",
-      "ou_chercher": "Administration federale des contributions (AFC). La Suisse applique la TVA, avec ses propres taux et sa propre mecanique d'import."
+      "regime": "Hors Union europeenne. Applique la TVA (MWST/TVA/IVA) avec ses propres taux et sa propre mecanique d'import.",
+      "administration": "Administration federale des contributions (AFC)"
     },
     "NO": {
       "nom": "Norvege",
-      "raison": "Hors Union europeenne. Non couverte par la source.",
-      "ou_chercher": "Skatteetaten. La Norvege applique la MVA, avec ses propres taux."
+      "regime": "Hors Union europeenne. Applique la MVA.",
+      "administration": "Skatteetaten"
     },
     "GB": {
       "nom": "Royaume-Uni",
-      "raison": "Sorti de l'Union europeenne. Non couvert par la source depuis le Brexit. Attention : le code fiscal historique etait GB, et EL - pas GR - reste le code de la Grece dans les nomenclatures TVA.",
-      "ou_chercher": "HMRC."
+      "regime": "Sorti de l'Union europeenne. Hors TEDB depuis le Brexit - le taux vient donc de la source tenue a la main.",
+      "administration": "HMRC"
     },
     "IS": {
       "nom": "Islande",
-      "raison": "Hors Union europeenne (Espace economique europeen). Non couverte par la source.",
-      "ou_chercher": "Skatturinn."
+      "regime": "Hors Union europeenne (Espace economique europeen).",
+      "administration": "Skatturinn"
     },
     "LI": {
       "nom": "Liechtenstein",
-      "raison": "Hors Union europeenne, en union douaniere avec la Suisse. Non couvert par la source.",
-      "ou_chercher": "Administration fiscale du Liechtenstein, alignee sur le regime suisse."
+      "regime": "Hors Union europeenne, en union douaniere avec la Suisse : regime et taux alignes sur le regime suisse.",
+      "administration": "Administration fiscale du Liechtenstein"
     },
     "TR": {
       "nom": "Turquie",
-      "raison": "Hors Union europeenne. Non couverte par la source.",
-      "ou_chercher": "Gelir Idaresi Baskanligi."
+      "regime": "Hors Union europeenne.",
+      "administration": "Gelir Idaresi Baskanligi"
     },
-    "XI": {
-      "nom": "Irlande du Nord",
-      "raison": "Regime particulier issu du protocole nord-irlandais : traitee comme territoire UE pour les biens, sous code XI, et la source ne la distingue pas du Royaume-Uni. Elle ne rend donc aucune ligne.",
-      "ou_chercher": "HMRC, et le protocole sur l'Irlande / Irlande du Nord."
+    "AD": {
+      "nom": "Andorre",
+      "regime": "Hors Union europeenne. Applique l'IGI, pas la TVA de l'Union - le taux general y est tres bas et ne se compare pas a un taux de TVA.",
+      "administration": "Departament de Tributs i de Fronteres"
+    },
+    "MC": {
+      "nom": "Monaco",
+      "regime": "Etat distinct, mais aligne sur le regime francais de TVA par convention. Le taux rendu suit donc la France.",
+      "administration": "Direction des Services Fiscaux de Monaco",
+      "attention": "La ligne vient de la source tenue a la main, alors que le regime suit la France. En cas d'ecart avec la ligne FR de TEDB, c'est FR qui fait foi."
+    },
+    "AL": {
+      "nom": "Albanie",
+      "regime": "Hors Union europeenne.",
+      "administration": "Drejtoria e Pergjithshme e Tatimeve"
+    },
+    "BA": {
+      "nom": "Bosnie-Herzegovine",
+      "regime": "Hors Union europeenne.",
+      "administration": "Uprava za indirektno oporezivanje"
+    },
+    "GE": {
+      "nom": "Georgie",
+      "regime": "Hors Union europeenne.",
+      "administration": "Revenue Service of Georgia"
+    },
+    "MD": {
+      "nom": "Moldavie",
+      "regime": "Hors Union europeenne.",
+      "administration": "Serviciul Fiscal de Stat"
+    },
+    "ME": {
+      "nom": "Montenegro",
+      "regime": "Hors Union europeenne.",
+      "administration": "Poreska uprava"
+    },
+    "MK": {
+      "nom": "Macedoine du Nord",
+      "regime": "Hors Union europeenne.",
+      "administration": "Uprava za javni prihodi"
+    },
+    "RS": {
+      "nom": "Serbie",
+      "regime": "Hors Union europeenne.",
+      "administration": "Poreska uprava Srbije"
+    },
+    "UA": {
+      "nom": "Ukraine",
+      "regime": "Hors Union europeenne.",
+      "administration": "Derzhavna podatkova sluzhba"
+    },
+    "XK": {
+      "nom": "Kosovo",
+      "regime": "Hors Union europeenne.",
+      "administration": "Administrata Tatimore e Kosoves"
     }
   },
-
   "territoires": {
     "CANARIES": {
       "pays": "ES",
       "regime": "Hors champ de la TVA de l'Union. Les Canaries appliquent l'IGIC, un impot local distinct.",
-      "consequence": "Le taux espagnol rendu par la source ne s'y applique PAS. Ne le cite jamais pour une livraison aux Canaries."
+      "consequence": "Le taux espagnol ne s'y applique PAS. Ne le cite jamais pour une livraison aux Canaries."
     },
     "CEUTA_MELILLA": {
       "pays": "ES",
@@ -124,12 +276,12 @@
     "MADERE": {
       "pays": "PT",
       "regime": "Region autonome : dans le champ de la TVA, mais avec des taux regionaux propres.",
-      "consequence": "Le taux continental rendu par la source n'est pas celui de Madere."
+      "consequence": "Le taux continental n'est pas celui de Madere."
     },
     "ACORES": {
       "pays": "PT",
       "regime": "Region autonome : dans le champ de la TVA, avec des taux regionaux propres.",
-      "consequence": "Le taux continental rendu par la source n'est pas celui des Acores."
+      "consequence": "Le taux continental n'est pas celui des Acores."
     },
     "CORSE": {
       "pays": "FR",
@@ -139,12 +291,7 @@
     "DOM": {
       "pays": "FR",
       "regime": "Guadeloupe, Martinique, La Reunion : taux specifiques. Guyane et Mayotte : TVA provisoirement non applicable.",
-      "consequence": "Aucun taux metropolitain n'est transposable a un DOM. La source ne les distingue pas."
-    },
-    "MONACO": {
-      "pays": "FR",
-      "regime": "Territoire aligne sur le regime francais de TVA par convention, mais Etat distinct.",
-      "consequence": "A traiter comme un cas a part, pas comme une ligne de la source."
+      "consequence": "Aucun taux metropolitain n'est transposable a un DOM."
     },
     "ALAND": {
       "pays": "FI",
@@ -166,5 +313,6 @@
       "regime": "Territoire exclu du champ de la TVA grecque.",
       "consequence": "Le taux grec ne s'y applique pas."
     }
-  }
+  },
+  "territoires_commentaire": "AUCUNE des deux sources ne couvre ces territoires : elles rendent UN taux par juridiction. C'est le seul « non couvert » qui reste apres le passage a TEDB - et c'est celui qui produit le plus d'erreurs de facturation, parce qu'un taux national existe et se cite par reflexe."
 }

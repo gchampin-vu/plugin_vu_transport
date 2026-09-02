@@ -80,14 +80,16 @@
     {
       "name": "taux-tva",
       "source": "./plugins/taux-tva",
-      "description": "Les taux de TVA des 27 Etats membres de l'Union, en lecture seule, depuis la source publique api.vatcomply.com : taux normal, taux reduits, super-reduit, taux parking, devise, et les categories de biens auxquelles chaque taux reduit s'applique. Remplace le script Power Query qui n'en gardait que trois colonnes. Referentiel embarque des noms maison et des codes - la Grece est EL, pas GR - et surtout de ce qui n'est PAS couvert : Suisse, Norvege, Royaume-Uni, Canaries, DOM, Madere, que le serveur nomme au lieu de rendre une ligne vide. Cache local date : reponse hors ligne annoncee comme telle, et comparaison avec le releve precedent pour dire si un taux a bouge. Chaque rendu porte la date du releve. Export CSV sur demande explicite, commande /tva-export. 8 outils et une skill. Outils annotes readOnlyHint conformement a la specification MCP.",
-      "version": "1.0.0",
+      "description": "Les taux de TVA de 45 juridictions europeennes, en lecture seule, depuis DEUX sources publiques qui n'ont pas la meme autorite : TEDB, la base officielle de la Commission europeenne (SOAP), pour les 27 Etats membres et XI (Irlande du Nord) ; et un jeu de donnees sous licence MIT, tenu a la main, pour les 17 juridictions hors Union - dont la Suisse, la Norvege et le Royaume-Uni - ainsi que pour les devises, que TEDB ne rend pas. La colonne `provenance` porte cette difference sur CHAQUE ligne : un taux suisse ne se cite pas avec l'assurance d'un taux francais. Ce que TEDB apporte et qu'aucun agregateur ne donnait : les 87 categories de biens et services, les CODES DE NOMENCLATURE DOUANIERE (CN) qui relient une categorie a un produit reel du catalogue, les commentaires officiels des Etats membres, les exemptions distinguees du taux zero, et la date d'effet de chaque taux. Referentiel embarque : la Grece est EL et non GR, « UE » designe les 27 et non tout le perimetre, XI est distincte de GB, et les territoires qu'AUCUNE source ne couvre (Canaries, Ceuta-Melilla, Madere, Acores, Corse, DOM, Aland, Busingen, Livigno, Mont Athos) sont nommes au lieu de laisser citer un taux national qui ne s'y applique pas. Cache local date, reponse hors ligne annoncee comme telle, comparaison avec le releve precedent. Aucune cle a saisir, aucune dependance nouvelle - le SOAP est parle sans zeep ni lxml. Export CSV sur demande explicite, commande /tva-export. 8 outils et une competence, annotes readOnlyHint.",
+      "version": "2.0.0",
       "category": "connecteur",
       "tags": [
         "tva",
         "vat",
         "fiscalite",
         "union-europeenne",
+        "tedb",
+        "nomenclature-cn",
         "facturation"
       ]
     }

@@ -8,9 +8,12 @@ Trois usages :
     python server.py --help
 
 Ce connecteur remplace le script Power Query qui appelait api.vatcomply.com et
-n'en gardait que trois colonnes (country_code, standard_rate, currency). La
-source en rend dix : les taux reduits, le super-reduit, le taux parking, et
-surtout `rate_categories`, qui dit A QUOI chaque taux reduit s'applique. C'est
+n'en gardait que trois colonnes (country_code, standard_rate, currency). Il ne
+passe plus par cet intermediaire : il interroge TEDB, la base officielle de la
+Commission europeenne, et un jeu de donnees public pour les juridictions hors
+Union. Ce qu'on y gagne, ce sont les categories de biens, les CODES DE
+NOMENCLATURE DOUANIERE qui relient une categorie a un produit reel, les
+commentaires officiels et la date d'effet de chaque taux. C'est
 cette derniere colonne qui repond aux questions qu'on se pose reellement -
 « quel taux sur le transport de personnes en Italie », « pourquoi 5,5 % en
 France » - et le script d'origine la jetait.
@@ -70,11 +73,16 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+import sources
+
 HERE = pathlib.Path(__file__).resolve().parent
 PAYS_FILE = HERE / "pays.json"
 
-DEFAULT_BASE_URL = "https://api.vatcomply.com"
-RATES_PATH = "/vat_rates"
+# Les deux sources vivent dans sources.py : c'est le seul module qui connait
+# le SOAP de TEDB et la forme du jeu vatnode. Ici on ne manipule que la forme
+# de ligne normalisee.
+DEFAULT_BASE_URL = sources.TEDB_ENDPOINT
+RATES_PATH = ""
 
 DEFAULT_TIMEOUT_S = 30.0
 
@@ -113,13 +121,21 @@ BRIEF_COLUMNS = (
     "taux_super_reduit",
     "taux_parking",
     "devise",
+    "provenance",
 )
 
+# La provenance est une COLONNE, pas une note de bas de page. Les deux moities
+# du perimetre n'ont pas la meme autorite : les 27 et XI viennent de la base
+# officielle de la Commission, les 17 autres d'un jeu tenu a la main. Melanger
+# les deux dans un tableau sans le dire, c'est laisser citer un taux suisse
+# avec la confiance qu'on accorde a un taux francais.
 LEGAL_NOTE = (
-    "Source : api.vatcomply.com, donnees publiques sans engagement de mise a "
-    "jour. Pour une facture, une declaration ou un parametrage d'ERP, la "
-    "reference est l'administration fiscale du pays - ce connecteur sert a "
-    "comparer 27 pays et a reperer un changement, pas a etablir un taux."
+    "Sources : TEDB (Commission europeenne, officielle) pour les 27 Etats "
+    "membres et XI ; vatnode (licence MIT, tenue a la main) pour les 17 "
+    "juridictions hors Union et pour les devises. Pour une facture, une "
+    "declaration ou un parametrage d'ERP, la reference reste l'administration "
+    "fiscale du pays - ce connecteur sert a comparer des juridictions et a "
+    "reperer un changement, pas a etablir un taux."
 )
 
 
@@ -303,6 +319,7 @@ SHARED_SUBPATH = ("04_mcp", "00_config")
 SHARED_ALLOWED = frozenset(
     {
         "TVA_BASE_URL",
+        "TVA_VATNODE_URL",
         "TVA_TIMEOUT_S",
         "TVA_TTL_HOURS",
         "TVA_PAYS_VU",
@@ -473,7 +490,25 @@ def _env(name: str, default: str = "") -> str:
 
 
 def _base_url() -> str:
-    return (_env("TVA_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+    """L'endpoint SOAP de TEDB.
+
+    On ne coupe PAS le slash final ici, contrairement a l'usage : ce n'est pas
+    une racine a laquelle on ajoute un chemin, c'est l'adresse a laquelle on
+    POSTe. Le service la sert avec son slash, et le retirer ajoute une
+    redirection a chaque appel - au mieux.
+    """
+    brut = (_env("TVA_BASE_URL") or DEFAULT_BASE_URL).strip()
+    return brut if brut.endswith("/") else brut + "/"
+
+
+def _vatnode_url() -> str:
+    """L'URL du jeu de donnees tenu a la main, si elle est forcee.
+
+    Rend une chaine VIDE quand rien n'est configure, et c'est volontaire : le
+    module sources essaie alors le CDN puis le depot brut. Rendre l'URL par
+    defaut ici supprimerait ce repli sans que personne ne s'en apercoive.
+    """
+    return _env("TVA_VATNODE_URL").strip()
 
 
 def _timeout() -> float:
@@ -537,53 +572,33 @@ def _perimetre_equipe() -> list[str]:
 # L'appel a la source, et le cache
 # --------------------------------------------------------------------------
 
-def _fetch_live() -> list[dict[str, Any]]:
-    """Un seul GET, sans parametre. Rien de Vente-unique ne sort d'ici."""
-    url = _base_url() + RATES_PATH
-    last = ""
-    for attempt in range(1, RETRY_ATTEMPTS + 1):
-        try:
-            response = httpx.get(
-                url,
-                timeout=_timeout(),
-                headers={"Accept": "application/json"},
-                follow_redirects=True,
-            )
-        except httpx.HTTPError as exc:
-            last = f"{type(exc).__name__} : {exc}"
-        else:
-            if response.status_code in RETRY_STATUSES:
-                last = f"HTTP {response.status_code}"
-            elif response.status_code == 429:
-                raise TvaError(
-                    "La source repond 429 (trop de requetes). Elle demande a "
-                    "etre laissee tranquille : on ne rejoue pas. Le cache "
-                    "local repond a la place - tva_taux sans tva_rafraichir."
-                )
-            elif response.status_code >= 400:
-                raise TvaError(
-                    f"GET {url} : HTTP {response.status_code}. "
-                    f"{response.text[:300]}"
-                )
-            else:
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    raise TvaError(
-                        f"GET {url} : reponse illisible, ce n'est pas du JSON "
-                        f"({exc}). La source a peut-etre change de forme."
-                    ) from exc
-                rows = _rows(payload)
-                if not rows:
-                    raise TvaError(
-                        f"GET {url} : reponse vide. Une reponse vide n'est pas "
-                        "« aucun taux » : c'est une source qui ne repond plus "
-                        "ce qu'on attend. Le cache n'est pas remplace."
-                    )
-                return rows
-        if attempt < RETRY_ATTEMPTS:
-            time.sleep(RETRY_BACKOFF_S * attempt)
-    raise TvaError(f"GET {url} injoignable apres {RETRY_ATTEMPTS} tentatives : {last}")
+def _fetch_live() -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    """Les deux sources, en lecture. Rien de Vente-unique ne sort d'ici.
+
+    Rend (lignes, compte-rendu des sources, incidents). Les noms de pays sont
+    poses ici depuis le referentiel local : TEDB rend un code, pas un nom
+    francais, et « Grece » doit s'afficher pour EL.
+    """
+    try:
+        blob = sources.fetch_tout(
+            _timeout(), tedb_endpoint=_base_url(), vatnode_url=_vatnode_url()
+        )
+    except sources.SourceError as exc:
+        raise TvaError(str(exc)) from exc
+
+    noms = _ref().get("codes", {})
+    membres = {_norm(c) for c in _ref().get("etats_membres", [])}
+    for ligne in blob["rows"]:
+        code = _norm(ligne.get("country_code"))
+        nom = noms.get(code)
+        if nom:
+            ligne["country_name"] = nom
+        # `member_state` sert a trier et a repondre a « UE ». On le recale sur
+        # le referentiel : XI est servie par TEDB mais n'est PAS un Etat
+        # membre, et la confondre avec un membre fausserait la reponse a
+        # « les 27 ».
+        ligne["member_state"] = code in membres
+    return blob["rows"], blob.get("sources", {}), blob.get("incidents", [])
 
 
 def _rows(payload: Any) -> list[dict[str, Any]]:
@@ -622,11 +637,17 @@ def _read_cache(path: pathlib.Path) -> dict[str, Any] | None:
     return blob
 
 
-def _write_cache(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _write_cache(
+    rows: list[dict[str, Any]],
+    compte_rendu: dict[str, Any] | None = None,
+    incidents: list[str] | None = None,
+) -> dict[str, Any]:
     """Ecrit le releve du jour, apres avoir mis l'ancien de cote s'il differe."""
     blob = {
         "releve": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "source": _base_url() + RATES_PATH,
+        "source": _base_url(),
+        "sources": compte_rendu or {},
+        "incidents": incidents or [],
         "rows": rows,
     }
     target = _cache_file()
@@ -682,7 +703,7 @@ def _payload(force: bool = False) -> dict[str, Any]:
             return cache
 
     try:
-        rows = _fetch_live()
+        rows, compte_rendu, incidents = _fetch_live()
     except TvaError as exc:
         if cache:
             age = _age_hours(cache.get("releve", "")) or 0.0
@@ -701,8 +722,8 @@ def _payload(force: bool = False) -> dict[str, Any]:
             "rendre. Ce serveur n'affiche pas un taux qu'il n'a pas lu."
         ) from exc
 
-    blob = _write_cache(rows)
-    blob["origine"] = "appel a la source"
+    blob = _write_cache(rows, compte_rendu, incidents)
+    blob["origine"] = "appel aux sources"
     blob["age_h"] = 0.0
     _MEMO = blob
     return blob
@@ -731,8 +752,9 @@ def _resolve(pays: str, connus: dict[str, dict[str, Any]]) -> tuple[list[str], l
     """
     ref = _ref()
     alias: dict[str, str] = {_norm(k): v for k, v in ref.get("alias", {}).items()}
-    hors = {_norm(k): v for k, v in ref.get("hors_perimetre", {}).items()}
+    admin = {_norm(k): v for k, v in ref.get("administrations", {}).items()}
     territoires = {_norm(k): v for k, v in ref.get("territoires", {}).items()}
+    membres = [_norm(c) for c in ref.get("etats_membres", [])]
 
     demande = [p for p in re.split(r"[,;/|]+", pays or "") if p.strip()]
     if not demande:
@@ -740,7 +762,14 @@ def _resolve(pays: str, connus: dict[str, dict[str, Any]]) -> tuple[list[str], l
         if perimetre:
             demande = perimetre
         else:
-            return sorted(connus), []
+            # On repasse par le chemin normal : c'est lui qui pose la reserve
+            # de provenance. Sortir ici rendait les 17 juridictions tenues a la
+            # main sans jamais le dire.
+            #
+            # « TOUS » et non « * » : _norm efface les caracteres non
+            # alphanumeriques, donc « * » ressort vide et la demande se perd en
+            # silence. On passe par l'alias, qui traverse la normalisation.
+            demande = ["TOUS"]
 
     codes: list[str] = []
     alertes: list[str] = []
@@ -759,15 +788,29 @@ def _resolve(pays: str, connus: dict[str, dict[str, Any]]) -> tuple[list[str], l
             for code in sorted(connus):
                 ajoute(code)
             continue
+        if cible == "@UE":
+            # « UE » ne veut PAS dire « tout ce que le connecteur sait ». Depuis
+            # que le perimetre depasse l'Union, confondre les deux rendrait la
+            # Suisse dans une reponse sur les Etats membres.
+            for code in membres:
+                ajoute(code)
+            manquants = [c for c in membres if c not in connus]
+            if manquants:
+                alertes.append(
+                    "RELEVE INCOMPLET - Etats membres absents : "
+                    + ", ".join(manquants)
+                    + ". Ce n'est pas « pas de TVA » : c'est un releve incomplet."
+                )
+            continue
         if cible == "@VU":
             perimetre = _perimetre_equipe()
             if not perimetre:
                 alertes.append(
-                    "« perimetre VU » demande, mais TVA_PAYS_VU n'est pas "
+                    "PERIMETRE - « VU » demande, mais TVA_PAYS_VU n'est pas "
                     "renseigne : la liste des pays ou l'equipe travaille est "
                     "une decision, elle n'est pas devinee par ce serveur. A "
-                    "poser dans 08_ENGINE/04_mcp/00_config/tva.shared.env. Les "
-                    "27 Etats membres sont rendus a la place."
+                    "poser dans 08_ENGINE/04_mcp/00_config/tva.shared.env. "
+                    "Toutes les juridictions couvertes sont rendues a la place."
                 )
                 for code in sorted(connus):
                     ajoute(code)
@@ -783,32 +826,69 @@ def _resolve(pays: str, connus: dict[str, dict[str, Any]]) -> tuple[list[str], l
             ajoute(cible)
             continue
 
-        if cible in hors:
-            info = hors[cible]
-            ou = str(info.get("ou_chercher") or "administration fiscale du pays")
+        if cible in admin:
+            # Le code est connu du referentiel mais absent du releve : c'est
+            # vatnode qui n'a pas repondu, pas le pays qui n'a pas de TVA.
+            info = admin[cible]
             alertes.append(
-                f"{info.get('nom', cible)} ({cible}) : AUCUN taux dans cette "
-                f"source. {info.get('raison', '')} Ou chercher : "
-                f"{ou.rstrip('.')}."
+                f"ABSENT DU RELEVE - {info.get('nom', cible)} ({cible}) est "
+                f"reconnu mais absent. {info.get('regime', '')} A verifier aupres de "
+                f"{str(info.get('administration') or 'son administration fiscale').rstrip('.')}."
             )
             continue
 
         if cible in territoires:
             info = territoires[cible]
             alertes.append(
-                f"{cible} : territoire a regime particulier, rattache a "
+                f"NON COUVERT - {cible} : territoire a regime particulier, rattache a "
                 f"{info.get('pays', '?')}. {info.get('regime', '')} "
                 f"{info.get('consequence', '')}"
             )
             continue
 
         alertes.append(
-            f"« {brut.strip()} » : code ou nom inconnu. Les codes couverts sont "
-            "les 27 Etats membres - et la Grece y porte le code EL, pas GR. "
-            "tva_pays liste ce qui est reconnu, et ce qui ne l'est pas."
+            f"INCONNU - « {brut.strip()} » : ni un code, ni un nom reconnu. Le perimetre couvre les "
+            "27 Etats membres, XI (Irlande du Nord) et 17 juridictions hors "
+            "Union - et la Grece y porte le code EL, pas GR. tva_pays liste ce "
+            "qui est reconnu, et ce qui ne l'est pas."
         )
 
-    return codes, alertes
+    # La reserve de provenance, une fois pour toutes les lignes concernees.
+    # Ligne par ligne elle serait du bruit ; absente, elle laisserait citer un
+    # taux suisse avec la confiance d'un taux francais.
+    a_la_main = [
+        c for c in codes if _norm((connus.get(c) or {}).get("source")) != "TEDB"
+    ]
+    if a_la_main:
+        ou = []
+        for c in a_la_main:
+            info = admin.get(c) or {}
+            ou.append(f"{c} ({info.get('administration', 'administration nationale')})")
+        seul = len(a_la_main) == 1
+        alertes.append(
+            "PROVENANCE - "
+            + ", ".join(a_la_main)
+            + (" ne vient PAS" if seul else " ne viennent PAS")
+            + " de la base officielle de la Commission : "
+            + ("c'est un taux tenu" if seul else "ce sont des taux tenus")
+            + " a la main dans un jeu de donnees public. "
+            + ("Bon" if seul else "Bons")
+            + " pour comparer, a verifier avant de facturer, aupres de : "
+            + ", ".join(ou)
+            + "."
+        )
+
+    # Dedoublonnage, en gardant l'ordre. La branche « VU » rappelle _resolve
+    # pour chaque element du perimetre : chaque sous-appel pose sa propre
+    # reserve de provenance, et l'appel englobant en pose une de plus. Sans ce
+    # filtre, le meme avertissement s'affiche deux fois - et un avertissement
+    # repete finit par ne plus etre lu.
+    uniques: list[str] = []
+    for alerte in alertes:
+        if alerte not in uniques:
+            uniques.append(alerte)
+
+    return codes, uniques
 
 
 # --------------------------------------------------------------------------
@@ -834,6 +914,20 @@ def _liste_num(value: Any) -> str:
     return " | ".join(_num(v) for v in value if v is not None)
 
 
+def _provenance(row: dict[str, Any]) -> str:
+    """Deux mots dans une cellule, pour que la colonne reste lisible.
+
+    « TEDB » se lit comme officiel, « main » comme a verifier. Le detail est
+    dans LEGAL_NOTE et dans tva_pays ; ici on n'a que la largeur d'une colonne.
+    """
+    src = str(row.get("source") or "")
+    if src == "TEDB":
+        return "TEDB"
+    if src:
+        return f"{src} (main)"
+    return ""
+
+
 def _vue(row: dict[str, Any], categorie: str = "") -> dict[str, str]:
     out = {
         "code": _norm(row.get("country_code")),
@@ -843,6 +937,8 @@ def _vue(row: dict[str, Any], categorie: str = "") -> dict[str, str]:
         "taux_super_reduit": _num(row.get("super_reduced_rate")),
         "taux_parking": _num(row.get("parking_rate")),
         "devise": str(row.get("currency") or ""),
+        "provenance": _provenance(row),
+        "effet": str(row.get("effective_on") or ""),
     }
     if categorie:
         cats = row.get("rate_categories")
@@ -888,6 +984,11 @@ def _entete(blob: dict[str, Any], titre: str) -> list[str]:
     lines.append(f"Releve du {releve}{age_txt} - origine : {blob.get('origine', '?')}")
     if blob.get("avertissement"):
         lines.append(f"ATTENTION : {blob['avertissement']}")
+    # Un incident de source ne fausse pas les lignes rendues, mais il change ce
+    # qui MANQUE. Une devise absente ou tout le hors-Union disparu se lit comme
+    # une reponse complete si on ne le dit pas.
+    for incident in blob.get("incidents") or []:
+        lines.append(f"ATTENTION : {incident}")
     if isinstance(age, (int, float)) and age > STALE_DAYS * 24:
         lines.append(
             f"ATTENTION : ce releve a plus de {STALE_DAYS:.0f} jours. Un taux "
@@ -906,8 +1007,11 @@ def _rendu(
     notes: list[str] | None = None,
 ) -> str:
     lines = _entete(blob, titre)
+    # Les messages arrivent deja qualifies par _resolve (NON COUVERT,
+    # ABSENT DU RELEVE, PROVENANCE, INCONNU...) : les prefixer en aveugle
+    # ferait passer une reserve de provenance pour une absence de taux.
     for alerte in alertes:
-        lines.append(f"NON COUVERT : {alerte}")
+        lines.append(alerte)
     for note in notes or []:
         lines.append(note)
     lines.append(f"{len(vues)} pays.")
@@ -950,26 +1054,40 @@ def _guard(fn):
 # --------------------------------------------------------------------------
 
 SERVER_INSTRUCTIONS = """\
-Connecteur en LECTURE SEULE sur les taux de TVA des 27 Etats membres de l'Union
-europeenne (source publique api.vatcomply.com).
+Connecteur en LECTURE SEULE sur les taux de TVA de 45 juridictions europeennes,
+depuis DEUX sources publiques qui n'ont pas la meme autorite.
 
-Trois choses a savoir avant de citer un taux :
+Quatre choses a savoir avant de citer un taux :
 
-1. LE PERIMETRE. Les 27 Etats membres, et eux seuls. Ni la Suisse, ni la
-   Norvege, ni le Royaume-Uni - trois pays ou Vente-unique vend. Une question
-   sur CH, NO ou GB n'a pas de reponse ici, et le serveur le dit au lieu de
-   rendre une ligne vide.
+1. DEUX SOURCES, DEUX NIVEAUX DE CONFIANCE. Les 27 Etats membres et XI
+   (Irlande du Nord) viennent de TEDB, la base officielle de la Commission
+   europeenne, alimentee par les Etats membres. Les 17 autres juridictions -
+   dont la Suisse, la Norvege et le Royaume-Uni - viennent d'un jeu de donnees
+   public tenu A LA MAIN. La colonne `provenance` le dit sur chaque ligne. Ne
+   presente jamais un taux suisse avec l'assurance d'un taux francais.
 
-2. LA GRECE PORTE LE CODE EL, pas GR. C'est la nomenclature TVA de l'Union.
+2. « UE » N'EST PAS « TOUT ». « UE » designe les 27 Etats membres ; « Europe »
+   ou « tous » les 45 juridictions. XI n'est PAS un Etat membre, et une
+   livraison a Belfast ne se traite pas comme une livraison en Grande-Bretagne.
+
+3. LA GRECE PORTE LE CODE EL, pas GR. C'est la nomenclature TVA de l'Union.
    Un rapprochement fait sur des codes ISO perd la Grece en silence.
 
-3. UN TAUX SE CITE AVEC SA DATE DE RELEVE. Chaque rendu la porte en tete. Cette
-   source est publique et sans engagement : pour une facture ou un parametrage
-   d'ERP, la reference est l'administration fiscale du pays.
+4. UN TAUX SE CITE AVEC SA DATE DE RELEVE. Chaque rendu la porte en tete, et
+   les lignes TEDB portent en plus la date d'effet du taux. Pour une facture,
+   une declaration ou un parametrage d'ERP, la reference reste l'administration
+   fiscale du pays.
 
-Commence par tva_taux. tva_detail donne les categories de biens et les
-commentaires officiels d'un pays. tva_changements dit si un taux a bouge depuis
-le releve precedent. N'exporte en CSV que si l'utilisateur a demande un export.
+Ce qu'AUCUNE des deux sources ne couvre : les territoires a regime particulier
+- Canaries, Ceuta-Melilla, Madere, Acores, Corse, DOM, Aland, Busingen,
+Livigno, Mont Athos. Un taux national existe et se cite par reflexe : c'est la
+premiere cause d'erreur de facturation. tva_pays les nomme.
+
+Commence par tva_taux. tva_detail donne, pour une juridiction TEDB, les
+categories de biens, les CODES DE NOMENCLATURE DOUANIERE (CN) qui relient une
+categorie a un produit reel, les commentaires officiels et les exemptions.
+tva_changements dit si un taux a bouge depuis le releve precedent. N'exporte en
+CSV que si l'utilisateur a demande un export.
 """
 
 
@@ -1008,15 +1126,21 @@ def tva_taux(pays: str = "", categorie: str = "") -> str:
     rendant les colonnes que celui-ci jetait.
 
     pays : codes ou noms separes par des virgules - « FR,DE,IT », « France,
-        Allemagne », « GR » (traduit en EL). « UE » ou « tous » pour les 27.
-        « VU » pour le perimetre d'equipe, s'il a ete pose dans le fichier
-        partage. Vide = le perimetre d'equipe s'il existe, sinon les 27.
+        Allemagne », « GR » (traduit en EL), « Suisse », « UK ». « UE » pour
+        les 27 Etats membres SEULEMENT ; « Europe » ou « tous » pour les 45
+        juridictions couvertes. « VU » pour le perimetre d'equipe, s'il a ete
+        pose dans le fichier partage. Vide = le perimetre d'equipe s'il
+        existe, sinon tout le perimetre couvert.
     categorie : ajoute une colonne avec le taux applicable a cette categorie de
         biens - « transport_passengers », « foodstuffs », « restaurant ». La
         liste exacte se lit avec tva_categories.
 
-    Ce qui n'est pas couvert par la source ressort en tete, nomme, avec ou
-    chercher la reponse : jamais une ligne manquante en silence.
+    La colonne `provenance` dit d'ou vient chaque ligne : « TEDB » pour la
+    base officielle de la Commission, « vatnode (main) » pour un taux tenu a
+    la main. Les deux ne s'invoquent pas avec la meme assurance.
+
+    Ce qui n'est pas couvert ressort en tete, nomme, avec ou chercher la
+    reponse : jamais une ligne manquante en silence.
     """
     blob = _payload()
     connus = _index(blob)
@@ -1059,7 +1183,7 @@ def tva_detail(pays: str, max_commentaires: int = 6) -> str:
     codes, alertes = _resolve(pays, connus)
     if not codes:
         lines = _entete(blob, f"Detail TVA : {pays}")
-        lines.extend(f"NON COUVERT : {a}" for a in alertes)
+        lines.extend(alertes)
         lines.append("Aucun pays couvert dans cette demande : rien a afficher.")
         lines.append("")
         lines.append(LEGAL_NOTE)
@@ -1073,23 +1197,61 @@ def tva_detail(pays: str, max_commentaires: int = 6) -> str:
 
     lines = _entete(blob, f"Detail TVA - {row.get('country_name')} ({codes[0]})")
     for alerte in alertes:
-        lines.append(f"NOTE : {alerte}")
+        lines.append(alerte)
     lines.append("")
     lines.append(f"Taux normal        : {_num(row.get('standard_rate'))}")
     lines.append(f"Taux reduits       : {_liste_num(row.get('reduced_rates')) or '(aucun)'}")
     lines.append(f"Super-reduit       : {_num(row.get('super_reduced_rate')) or '(aucun)'}")
     lines.append(f"Taux parking       : {_num(row.get('parking_rate')) or '(aucun)'}")
-    lines.append(f"Devise             : {row.get('currency')}")
+    lines.append(f"Devise             : {row.get('currency') or '(inconnue)'}")
     lines.append(f"Etat membre        : {_num(row.get('member_state'))}")
+    lines.append(f"Provenance         : {_provenance(row)}")
+    if row.get("effective_on"):
+        lines.append(f"Taux normal en vigueur depuis le {row['effective_on']}")
+    if _norm(row.get("source")) != "TEDB":
+        info = _ref().get("administrations", {}).get(codes[0], {})
+        lines.append("")
+        lines.append(
+            "ATTENTION - cette juridiction ne vient PAS de la base officielle "
+            "de la Commission. Le taux est tenu a la main dans un jeu de "
+            "donnees public : il n'y a ni categorie de biens, ni code de "
+            "nomenclature, ni commentaire officiel, ni date d'effet."
+        )
+        if info.get("regime"):
+            lines.append(f"  Regime : {info['regime']}")
+        if info.get("administration"):
+            lines.append(f"  A verifier aupres de : {info['administration']}")
+        if info.get("attention"):
+            lines.append(f"  {info['attention']}")
 
     cats = row.get("rate_categories")
     cats = cats if isinstance(cats, dict) else {}
     lines.append("")
+    cn = row.get("cn_codes")
+    cn = cn if isinstance(cn, dict) else {}
     lines.append(f"Categories de biens et services ({len(cats)}) : taux applicable")
     if not cats:
-        lines.append("  (la source n'en declare aucune pour ce pays)")
+        lines.append("  (aucune declaree pour cette juridiction)")
     for name in sorted(cats):
-        lines.append(f"  {name} : {_liste_num(cats[name])}")
+        # Les codes de nomenclature douaniere sont ce qui permet de rattacher
+        # la categorie a un produit reel du catalogue. On en montre quelques-uns
+        # : la liste complete part dans l'export.
+        codes_cn = cn.get(name) or []
+        suffixe = ""
+        if codes_cn:
+            apercu = " ".join(codes_cn[:6])
+            reste = f" +{len(codes_cn) - 6}" if len(codes_cn) > 6 else ""
+            suffixe = f"   [CN {apercu}{reste}]"
+        lines.append(f"  {name} : {_liste_num(cats[name])}{suffixe}")
+
+    exemptions = row.get("exemptions")
+    if isinstance(exemptions, list) and exemptions:
+        lines.append("")
+        lines.append(
+            f"Categories exemptees ou hors champ ({len(exemptions)}) - "
+            "attention, « exempte » n'est pas « taux zero » sur une facture :"
+        )
+        lines.append("  " + ", ".join(exemptions))
 
     comments = row.get("rate_comments")
     comments = comments if isinstance(comments, dict) else {}
@@ -1154,7 +1316,7 @@ def tva_categories(pays: str = "") -> str:
 
     lines = _entete(blob, "Categories de biens et services")
     for alerte in alertes:
-        lines.append(f"NON COUVERT : {alerte}")
+        lines.append(alerte)
     lines.append(
         f"{len(compte)} categorie(s) declaree(s), sur {len(codes)} pays "
         "interroge(s). Le nombre entre parentheses est le nombre de pays qui "
@@ -1176,11 +1338,17 @@ def tva_categories(pays: str = "") -> str:
 @mcp.tool(annotations=_hints("Codes pays reconnus, et ce qui n'est pas couvert", HORS_LIGNE))
 @_guard
 def tva_pays(recherche: str = "") -> str:
-    """Ce que le connecteur reconnait, et surtout ce qu'il NE couvre PAS.
+    """Ce que le connecteur couvre, avec quelle AUTORITE, et ce qu'il ne couvre pas.
 
-    Repond depuis le referentiel local, sans appel a la source. C'est l'outil a
+    Repond depuis le referentiel local, sans appel aux sources. C'est l'outil a
     lire avant de conclure qu'un pays « n'a pas de TVA » : la bonne reponse est
-    souvent « cette source ne le couvre pas », ce qui n'est pas la meme chose.
+    souvent « ce n'est pas la meme source qui le dit », ce qui n'est pas la
+    meme chose.
+
+    Le partage qui compte n'est plus couvert / non couvert - depuis le passage
+    a TEDB, presque toute l'Europe est couverte. C'est OFFICIEL / TENU A LA
+    MAIN : les 27 et XI viennent de la base de la Commission, les 17 autres
+    d'un jeu de donnees public entretenu manuellement.
 
     recherche : filtre sur un code, un nom ou un territoire.
     """
@@ -1192,38 +1360,69 @@ def tva_pays(recherche: str = "") -> str:
             return True
         return any(besoin in _norm(c) for c in champs)
 
-    lines = ["Referentiel des pays - connecteur tva", ""]
-    lines.append("Couverts par la source (27 Etats membres)")
     codes = ref.get("codes", {})
-    trouves = [(c, n) for c, n in sorted(codes.items()) if garde(c, n)]
-    for code, nom in trouves:
-        marque = "  <- code TVA de l'Union, PAS le code ISO GR" if code == "EL" else ""
-        lines.append(f"  {code}  {nom}{marque}")
-    if not trouves:
+    membres = [_norm(c) for c in ref.get("etats_membres", [])]
+    admin = ref.get("administrations", {})
+
+    lines = ["Referentiel des juridictions - connecteur tva", ""]
+    lines.append(
+        f"SOURCE OFFICIELLE - TEDB, Commission europeenne ({len(membres)} Etats "
+        "membres + XI)"
+    )
+    lines.append(
+        "  Taux, categories de biens, codes de nomenclature douaniere, "
+        "commentaires officiels et date d'effet."
+    )
+    officiels = [c for c in membres + ["XI"] if garde(c, codes.get(c))]
+    for code in officiels:
+        marque = ""
+        if code == "EL":
+            marque = "  <- code TVA de l'Union, PAS le code ISO GR"
+        elif code == "XI":
+            marque = "  <- Irlande du Nord : dans le champ TVA de l'Union pour les biens, distincte de GB"
+        lines.append(f"  {code}  {codes.get(code, '?')}{marque}")
+    if not officiels:
         lines.append("  (aucun code ne correspond a la recherche)")
 
     lines.append("")
-    lines.append("NON couverts - aucun taux ne sera rendu pour eux")
-    hors = ref.get("hors_perimetre", {})
+    hors_ue = [c for c in sorted(codes) if c not in membres and c != "XI"]
+    lines.append(
+        f"SOURCE TENUE A LA MAIN - vatnode, licence MIT ({len(hors_ue)} "
+        "juridictions hors Union)"
+    )
+    lines.append(
+        "  Taux et devise seulement. Ni categorie, ni code de nomenclature, ni "
+        "commentaire, ni date d'effet. A verifier avant de facturer."
+    )
     trouves_hors = [
-        (c, i) for c, i in sorted(hors.items()) if garde(c, i.get("nom"))
+        c for c in hors_ue if garde(c, codes.get(c), (admin.get(c) or {}).get("regime"))
     ]
-    for code, info in trouves_hors:
-        lines.append(f"  {code}  {info.get('nom')} - {info.get('raison')}")
-        lines.append(f"        Ou chercher : {info.get('ou_chercher')}")
+    for code in trouves_hors:
+        info = admin.get(code) or {}
+        lines.append(f"  {code}  {codes.get(code, '?')} - {info.get('regime', '')}")
+        if info.get("administration"):
+            lines.append(f"        A verifier aupres de : {info['administration']}")
+        if info.get("attention"):
+            lines.append(f"        {info['attention']}")
     if not trouves_hors:
         lines.append("  (aucun ne correspond a la recherche)")
 
     lines.append("")
-    lines.append("Territoires a regime particulier - le taux national ne s'y applique pas")
+    lines.append(
+        "NON COUVERTS PAR AUCUNE DES DEUX SOURCES - territoires a regime "
+        "particulier : le taux national ne s'y applique pas"
+    )
     terr = ref.get("territoires", {})
     trouves_terr = [
         (n, i) for n, i in sorted(terr.items()) if garde(n, i.get("pays"), i.get("regime"))
     ]
     for nom, info in trouves_terr:
         lines.append(f"  {nom} (rattache a {info.get('pays')}) - {info.get('regime')}")
+        lines.append(f"        {info.get('consequence', '')}")
     if not trouves_terr:
         lines.append("  (aucun ne correspond a la recherche)")
+    if ref.get("territoires_commentaire"):
+        lines.append(f"  {ref['territoires_commentaire']}")
 
     perimetre = _perimetre_equipe()
     lines.append("")
@@ -1232,7 +1431,8 @@ def tva_pays(recherche: str = "") -> str:
     else:
         lines.append(
             "Perimetre d'equipe TVA_PAYS_VU : non renseigne. « VU » et un appel "
-            "sans pays rendent donc les 27. La liste des pays ou l'equipe "
+            "sans pays rendent donc TOUTES les juridictions couvertes. La "
+            "liste des pays ou l'equipe "
             "travaille est une decision : elle se pose dans "
             "08_ENGINE/04_mcp/00_config/tva.shared.env, pas dans ce code."
         )
@@ -1384,7 +1584,7 @@ def tva_export_csv(
 
     choix = _norm(forme)
     if choix in {"PAYS", "", "COURT"}:
-        cols = list(BRIEF_COLUMNS) + ["etat_membre", "releve"]
+        cols = list(BRIEF_COLUMNS) + ["effet", "etat_membre", "releve"]
         rows: list[dict[str, Any]] = []
         for code in codes:
             vue = dict(_vue(connus[code]))
@@ -1392,17 +1592,23 @@ def tva_export_csv(
             vue["releve"] = releve
             rows.append(vue)
     elif choix in {"CATEGORIES", "CATEGORIE", "LONG"}:
-        cols = ["code", "pays", "taux_normal", "categorie", "taux_categorie", "devise", "releve"]
+        cols = [
+            "code", "pays", "taux_normal", "categorie", "taux_categorie",
+            "codes_cn", "devise", "provenance", "releve",
+        ]
         rows = []
         for code in codes:
             row = connus[code]
             cats = row.get("rate_categories")
             cats = cats if isinstance(cats, dict) else {}
+            cn = row.get("cn_codes")
+            cn = cn if isinstance(cn, dict) else {}
             base = {
                 "code": code,
                 "pays": str(row.get("country_name") or ""),
                 "taux_normal": _num(row.get("standard_rate")),
                 "devise": str(row.get("currency") or ""),
+                "provenance": _provenance(row),
                 "releve": releve,
             }
             if not cats:
@@ -1413,7 +1619,16 @@ def tva_export_csv(
                 valeurs = valeurs if isinstance(valeurs, list) else [valeurs]
                 for valeur in valeurs:
                     rows.append(
-                        {**base, "categorie": name, "taux_categorie": _num(valeur)}
+                        {
+                            **base,
+                            "categorie": name,
+                            "taux_categorie": _num(valeur),
+                            # Les codes de nomenclature douaniere sont ce qui
+                            # relie une categorie a un produit reel du
+                            # catalogue. Ils n'existent que sur les lignes
+                            # TEDB.
+                            "codes_cn": " ".join(cn.get(name, [])),
+                        }
                     )
     else:
         raise TvaError(
@@ -1455,7 +1670,7 @@ def tva_export_csv(
     if blob.get("avertissement"):
         out.insert(1, f"ATTENTION : {blob['avertissement']}")
     for alerte in alertes:
-        out.append(f"NON COUVERT, donc ABSENT du fichier : {alerte}")
+        out.append(alerte)
     out.append("")
     out.append("Colonnes : " + ", ".join(cols))
     out.append(LEGAL_NOTE)
@@ -1507,11 +1722,18 @@ def tva_doctor() -> str:
     )
     lines.append("")
     lines.append(f"TVA_BASE_URL             : {_base_url()}")
+    lines.append(
+        "TVA_VATNODE_URL          : "
+        + (_vatnode_url() or f"{sources.VATNODE_URL} (defaut, avec repli)")
+    )
     lines.append(f"TVA_TIMEOUT_S            : {_timeout()}")
     lines.append(f"TVA_TTL_HOURS            : {_ttl_hours()}")
     lines.append(
         "TVA_PAYS_VU              : "
-        + (", ".join(_perimetre_equipe()) or "(non renseigne - les 27 par defaut)")
+        + (
+            ", ".join(_perimetre_equipe())
+            or "(non renseigne - tout le perimetre couvert par defaut)"
+        )
     )
     lines.append(f"Dossier d'export         : {_export_dir()}")
 
@@ -1533,31 +1755,82 @@ def tva_doctor() -> str:
 
     try:
         ref = _ref()
+        membres = ref.get("etats_membres", [])
+        codes_ref = ref.get("codes", {})
         lines.append(
-            f"Referentiel local        : {len(ref.get('codes', {}))} codes, "
-            f"{len(ref.get('hors_perimetre', {}))} pays non couverts, "
+            f"Referentiel local        : {len(codes_ref)} juridictions "
+            f"({len(membres)} Etats membres + XI en officiel, "
+            f"{len(codes_ref) - len(membres) - 1} tenues a la main), "
             f"{len(ref.get('territoires', {}))} territoires a regime particulier"
         )
     except ConfigError as exc:
         lines.append(f"Referentiel local        : ERREUR - {exc}")
 
     lines.append("")
-    lines.append("Appel de verification")
+    lines.append("Appels de verification - les deux sources, separement")
+    # Separement, et c'est le point : une panne de vatnode n'a pas les memes
+    # consequences qu'une panne de TEDB, et un diagnostic qui les confond ne
+    # dit pas quoi reparer.
     try:
-        rows = _fetch_live()
+        lignes_tedb = sources.fetch_tedb(_timeout(), endpoint=_base_url())
+        codes_tedb = sorted(_norm(r.get("country_code")) for r in lignes_tedb)
+        avec_cat = sum(1 for r in lignes_tedb if r.get("rate_categories"))
+        lines.append(
+            f"  [officiel] POST {_base_url()} : OK | "
+            f"{len(lignes_tedb)} juridictions, {avec_cat} avec categories | "
+            + ", ".join(codes_tedb)
+        )
+    except sources.SourceError as exc:
+        lines.append(f"  [officiel] POST {_base_url()} : ECHEC - {exc}")
+        lines.append(
+            "    Consequence : AUCUNE reponse possible pour les Etats membres. "
+            "TEDB est la source qui ne se degrade pas."
+        )
+
+    try:
+        hors, devises, version = sources.fetch_vatnode(
+            _timeout(), url_base=_vatnode_url()
+        )
+        lines.append(
+            f"  [tenu a la main] GET {_vatnode_url() or sources.VATNODE_URL}"
+            f" : OK | jeu du "
+            f"{version or '?'} | {len(hors)} juridictions hors Union, "
+            f"{len(devises)} devises"
+        )
+    except sources.SourceError as exc:
+        lines.append(
+            f"  [tenu a la main] GET "
+            f"{_vatnode_url() or sources.VATNODE_URL} : ECHEC - {exc}"
+        )
+        lines.append(
+            "    Consequence : ni devise, ni juridiction hors Union - CH, GB et "
+            "NO seraient absents. Ce n'est PAS « ils n'ont pas de TVA »."
+        )
+
+    try:
+        rows, _cr, incidents = _fetch_live()
         codes = sorted(_norm(r.get("country_code")) for r in rows)
         lines.append(
-            f"  GET {_base_url()}{RATES_PATH} : OK | {len(rows)} pays | "
-            + ", ".join(codes)
+            f"  [fusion] {len(rows)} juridictions | " + ", ".join(codes)
         )
-        manquants = [c for c in ("CH", "NO", "GB") if c not in codes]
+        for incident in incidents:
+            lines.append(f"    INCIDENT : {incident}")
+        # Ces quatre-la sont desormais ATTENDUS. Leur absence n'est plus
+        # « normal, la source ne les couvre pas » : c'est un defaut a reparer.
+        manquants = [c for c in ("CH", "NO", "GB", "XI") if c not in codes]
         if manquants:
             lines.append(
-                "  Rappel : " + ", ".join(manquants) + " ne sont PAS dans la "
-                "source, et c'est normal - elle ne couvre que les Etats membres."
+                "  ANOMALIE : " + ", ".join(manquants) + " devraient etre "
+                "couverts et sont absents. XI vient de TEDB, CH/NO/GB de "
+                "vatnode : regarde lequel des deux appels ci-dessus a echoue."
+            )
+        else:
+            lines.append(
+                "  CH, NO, GB et XI sont bien presents - c'est ce que le "
+                "passage a deux sources devait apporter."
             )
     except (ConfigError, TvaError) as exc:
-        lines.append(f"  GET {_base_url()}{RATES_PATH} : ECHEC | {exc}")
+        lines.append(f"  [fusion] ECHEC | {exc}")
         if cache:
             lines.append(
                 "  Le cache local permet quand meme de repondre, avec son age "
@@ -1571,13 +1844,13 @@ def tva_doctor() -> str:
 # --------------------------------------------------------------------------
 
 HELP = """\
-MCP tva - les taux de TVA des 27 Etats membres, en lecture seule.
+MCP tva - les taux de TVA de 45 juridictions europeennes, en lecture seule.
 
   python server.py            mode serveur MCP (stdio), lance par Claude Code
   python server.py doctor     diagnostic de configuration et de connexion
   python server.py --help     cette aide
 
-Aucune cle d'API : la source (api.vatcomply.com) est publique et anonyme.
+Aucune cle d'API : les deux sources (TEDB, vatnode) sont publiques et anonymes.
 
 Configuration, en deux couches, et toutes deux optionnelles :
   - l'equipe : 08_ENGINE/04_mcp/00_config/tva.shared.env - racine d'API, duree
