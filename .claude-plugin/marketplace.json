@@ -76,6 +76,20 @@
         "webfacto",
         "projets"
       ]
+    },
+    {
+      "name": "taux-tva",
+      "source": "./plugins/taux-tva",
+      "description": "Les taux de TVA des 27 Etats membres de l'Union, en lecture seule, depuis la source publique api.vatcomply.com : taux normal, taux reduits, super-reduit, taux parking, devise, et les categories de biens auxquelles chaque taux reduit s'applique. Remplace le script Power Query qui n'en gardait que trois colonnes. Referentiel embarque des noms maison et des codes - la Grece est EL, pas GR - et surtout de ce qui n'est PAS couvert : Suisse, Norvege, Royaume-Uni, Canaries, DOM, Madere, que le serveur nomme au lieu de rendre une ligne vide. Cache local date : reponse hors ligne annoncee comme telle, et comparaison avec le releve precedent pour dire si un taux a bouge. Chaque rendu porte la date du releve. Export CSV sur demande explicite, commande /tva-export. 8 outils et une skill. Outils annotes readOnlyHint conformement a la specification MCP.",
+      "version": "1.0.0",
+      "category": "connecteur",
+      "tags": [
+        "tva",
+        "vat",
+        "fiscalite",
+        "union-europeenne",
+        "facturation"
+      ]
     }
   ]
 }

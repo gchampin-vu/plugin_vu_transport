@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "taux-tva",
+  "displayName": "Taux de TVA UE (lecture seule)",
+  "version": "1.0.0",
+  "description": "Les taux de TVA des 27 Etats membres de l'Union, en lecture seule, depuis la source publique api.vatcomply.com : taux normal, taux reduits, super-reduit, taux parking, devise, et les categories de biens auxquelles chaque taux reduit s'applique. Remplace le script Power Query qui n'en gardait que trois colonnes. Referentiel embarque des noms maison et des codes - la Grece est EL, pas GR - et surtout de ce qui n'est PAS couvert : Suisse, Norvege, Royaume-Uni, Canaries, DOM, Madere. Un cache local date rend le connecteur utilisable hors ligne et permet de dire si un taux a bouge. Chaque rendu porte la date du releve. Export CSV sur demande explicite. 8 outils et une competence.",
+  "author": {
+    "name": "Equipe Logistique & Transport, Vente-unique.com"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "tva",
+    "vat",
+    "fiscalite",
+    "union-europeenne",
+    "facturation",
+    "lecture-seule"
+  ],
+  "userConfig": {
+    "pays_vu": {
+      "type": "string",
+      "title": "Pays interroges par defaut (optionnel)",
+      "description": "Liste separee par des virgules - FR,BE,NL,DE. C'est ce que rend une question qui ne nomme aucun pays, et ce que designe « VU ». Reglage d'EQUIPE par nature : sa place est 08_ENGINE/04_mcp/00_config/tva.shared.env. Ne le renseigne ici que pour travailler sur un sous-ensemble depuis ce poste. Vide partout = les 27 Etats membres.",
+      "required": false
+    },
+    "ttl_hours": {
+      "type": "string",
+      "title": "Fraicheur du cache local, en heures (optionnel)",
+      "description": "Duree pendant laquelle le releve en cache repond sans rappeler la source. Defaut : 24. Un taux de TVA change par une loi de finances, pas dans la journee. L'outil tva_rafraichir force le rappel quand la question porte sur l'instant.",
+      "required": false
+    },
+    "timeout_s": {
+      "type": "string",
+      "title": "Delai d'attente d'un appel, en secondes (optionnel)",
+      "description": "Defaut : 30. A relever si le poste sort par un proxy lent.",
+      "required": false
+    },
+    "base_url": {
+      "type": "string",
+      "title": "Racine de l'API (optionnel)",
+      "description": "Laisse vide : le defaut est https://api.vatcomply.com. Ce champ ne sert qu'a pointer un miroir ou un bouchon de test. Il n'y a aucune cle d'API a saisir pour ce connecteur - la source est publique et anonyme.",
+      "required": false
+    },
+    "export_dir": {
+      "type": "directory",
+      "title": "Dossier des exports CSV (optionnel)",
+      "description": "Ou atterrissent les exports. Par defaut ~/.tva-mcp/exports. Ce reglage est LOCAL par nature : il ne peut pas venir du fichier d'equipe, un chemin valable ici n'existe pas sur les autres postes. Ne le pointe jamais dans la bibliotheque SharePoint : un CSV pose dans un dossier synchronise part chez tout le monde.",
+      "required": false
+    },
+    "shared_env": {
+      "type": "string",
+      "title": "Chemin du fichier de configuration d'equipe (optionnel)",
+      "description": "A ne renseigner que si tva_doctor affiche « Config d'equipe : aucune » ET que l'equipe a depose un tva.shared.env. Le connecteur cherche tout seul 08_ENGINE/04_mcp/00_config/tva.shared.env sous ton profil ; il ne le trouve pas si la bibliotheque SharePoint « Transport BtoC » n'est pas synchronisee au meme endroit que chez les autres. Sans ce fichier le connecteur fonctionne quand meme : il n'a ni cle ni racine a en recevoir.",
+      "required": false
+    }
+  }
+}

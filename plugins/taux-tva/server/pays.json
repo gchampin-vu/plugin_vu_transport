@@ -1,0 +1,170 @@
+{
+  "source": "https://api.vatcomply.com/vat_rates",
+  "releve": "2026-09-01",
+  "commentaire": "Referentiel LOCAL du connecteur. Il ne porte AUCUN taux : les taux viennent de l'API, jamais d'ici. Il porte ce que l'API ne dit pas - la traduction des noms maison en codes, et surtout ce qui n'est PAS couvert.",
+
+  "codes": {
+    "AT": "Autriche",
+    "BE": "Belgique",
+    "BG": "Bulgarie",
+    "CY": "Chypre",
+    "CZ": "Tchequie",
+    "DE": "Allemagne",
+    "DK": "Danemark",
+    "EE": "Estonie",
+    "EL": "Grece",
+    "ES": "Espagne",
+    "FI": "Finlande",
+    "FR": "France",
+    "HR": "Croatie",
+    "HU": "Hongrie",
+    "IE": "Irlande",
+    "IT": "Italie",
+    "LT": "Lituanie",
+    "LU": "Luxembourg",
+    "LV": "Lettonie",
+    "MT": "Malte",
+    "NL": "Pays-Bas",
+    "PL": "Pologne",
+    "PT": "Portugal",
+    "RO": "Roumanie",
+    "SE": "Suede",
+    "SI": "Slovenie",
+    "SK": "Slovaquie"
+  },
+
+  "alias": {
+    "GR": "EL",
+    "GRECE": "EL",
+    "HELLADE": "EL",
+    "ALLEMAGNE": "DE",
+    "AUTRICHE": "AT",
+    "BELGIQUE": "BE",
+    "BULGARIE": "BG",
+    "CHYPRE": "CY",
+    "CROATIE": "HR",
+    "DANEMARK": "DK",
+    "ESPAGNE": "ES",
+    "ESTONIE": "EE",
+    "FINLANDE": "FI",
+    "FRANCE": "FR",
+    "HONGRIE": "HU",
+    "IRLANDE": "IE",
+    "ITALIE": "IT",
+    "LETTONIE": "LV",
+    "LITUANIE": "LT",
+    "MALTE": "MT",
+    "PAYS_BAS": "NL",
+    "HOLLANDE": "NL",
+    "POLOGNE": "PL",
+    "PORTUGAL": "PT",
+    "ROUMANIE": "RO",
+    "SLOVAQUIE": "SK",
+    "SLOVENIE": "SI",
+    "SUEDE": "SE",
+    "TCHEQUIE": "CZ",
+    "REPUBLIQUE_TCHEQUE": "CZ",
+    "UE": "*",
+    "EU": "*",
+    "TOUS": "*",
+    "VU": "@VU",
+    "PERIMETRE_VU": "@VU",
+    "VENTE_UNIQUE": "@VU"
+  },
+
+  "hors_perimetre": {
+    "CH": {
+      "nom": "Suisse",
+      "raison": "Hors Union europeenne. La source ne couvre que les 27 Etats membres : elle ne rend AUCUNE ligne pour la Suisse, et il n'y a rien a en deduire.",
+      "ou_chercher": "Administration federale des contributions (AFC). La Suisse applique la TVA, avec ses propres taux et sa propre mecanique d'import."
+    },
+    "NO": {
+      "nom": "Norvege",
+      "raison": "Hors Union europeenne. Non couverte par la source.",
+      "ou_chercher": "Skatteetaten. La Norvege applique la MVA, avec ses propres taux."
+    },
+    "GB": {
+      "nom": "Royaume-Uni",
+      "raison": "Sorti de l'Union europeenne. Non couvert par la source depuis le Brexit. Attention : le code fiscal historique etait GB, et EL - pas GR - reste le code de la Grece dans les nomenclatures TVA.",
+      "ou_chercher": "HMRC."
+    },
+    "IS": {
+      "nom": "Islande",
+      "raison": "Hors Union europeenne (Espace economique europeen). Non couverte par la source.",
+      "ou_chercher": "Skatturinn."
+    },
+    "LI": {
+      "nom": "Liechtenstein",
+      "raison": "Hors Union europeenne, en union douaniere avec la Suisse. Non couvert par la source.",
+      "ou_chercher": "Administration fiscale du Liechtenstein, alignee sur le regime suisse."
+    },
+    "TR": {
+      "nom": "Turquie",
+      "raison": "Hors Union europeenne. Non couverte par la source.",
+      "ou_chercher": "Gelir Idaresi Baskanligi."
+    },
+    "XI": {
+      "nom": "Irlande du Nord",
+      "raison": "Regime particulier issu du protocole nord-irlandais : traitee comme territoire UE pour les biens, sous code XI, et la source ne la distingue pas du Royaume-Uni. Elle ne rend donc aucune ligne.",
+      "ou_chercher": "HMRC, et le protocole sur l'Irlande / Irlande du Nord."
+    }
+  },
+
+  "territoires": {
+    "CANARIES": {
+      "pays": "ES",
+      "regime": "Hors champ de la TVA de l'Union. Les Canaries appliquent l'IGIC, un impot local distinct.",
+      "consequence": "Le taux espagnol rendu par la source ne s'y applique PAS. Ne le cite jamais pour une livraison aux Canaries."
+    },
+    "CEUTA_MELILLA": {
+      "pays": "ES",
+      "regime": "Hors champ de la TVA de l'Union. Regime propre (IPSI).",
+      "consequence": "Le taux espagnol ne s'y applique pas."
+    },
+    "MADERE": {
+      "pays": "PT",
+      "regime": "Region autonome : dans le champ de la TVA, mais avec des taux regionaux propres.",
+      "consequence": "Le taux continental rendu par la source n'est pas celui de Madere."
+    },
+    "ACORES": {
+      "pays": "PT",
+      "regime": "Region autonome : dans le champ de la TVA, avec des taux regionaux propres.",
+      "consequence": "Le taux continental rendu par la source n'est pas celui des Acores."
+    },
+    "CORSE": {
+      "pays": "FR",
+      "regime": "Dans le champ de la TVA francaise, avec des taux particuliers pour certaines operations.",
+      "consequence": "Le taux metropolitain ne repond pas a lui seul pour la Corse."
+    },
+    "DOM": {
+      "pays": "FR",
+      "regime": "Guadeloupe, Martinique, La Reunion : taux specifiques. Guyane et Mayotte : TVA provisoirement non applicable.",
+      "consequence": "Aucun taux metropolitain n'est transposable a un DOM. La source ne les distingue pas."
+    },
+    "MONACO": {
+      "pays": "FR",
+      "regime": "Territoire aligne sur le regime francais de TVA par convention, mais Etat distinct.",
+      "consequence": "A traiter comme un cas a part, pas comme une ligne de la source."
+    },
+    "ALAND": {
+      "pays": "FI",
+      "regime": "Hors du territoire fiscal de l'Union pour la TVA, tout en etant dans l'Union douaniere.",
+      "consequence": "Le taux finlandais ne s'y applique pas de plein droit."
+    },
+    "BUSINGEN_HELGOLAND": {
+      "pays": "DE",
+      "regime": "Territoires exclus du champ de la TVA allemande.",
+      "consequence": "Le taux allemand ne s'y applique pas."
+    },
+    "LIVIGNO_CAMPIONE": {
+      "pays": "IT",
+      "regime": "Territoires exclus du champ de la TVA italienne.",
+      "consequence": "Le taux italien ne s'y applique pas."
+    },
+    "MONT_ATHOS": {
+      "pays": "EL",
+      "regime": "Territoire exclu du champ de la TVA grecque.",
+      "consequence": "Le taux grec ne s'y applique pas."
+    }
+  }
+}
